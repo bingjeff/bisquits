@@ -55,6 +55,11 @@ app.innerHTML = `
           <p id="pressure-countdown" class="metric-subtle"></p>
         </div>
 
+        <div class="hud-card">
+          <p class="label">Tile Shelf</p>
+          <div id="tile-shelf" class="tile-shelf" aria-label="Tile shelf"></div>
+        </div>
+
         <div id="trade-zone" class="trade-zone" aria-label="Trade zone">
           Drop a tile here to trade one for three.
         </div>
@@ -76,9 +81,27 @@ function requireElement<T extends Element>(selector: string): T {
   return element;
 }
 
+function tileNumericId(tileId: string): number {
+  const value = Number(tileId.replace(/\D+/g, ""));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareByTileId(a: Tile, b: Tile): number {
+  const delta = tileNumericId(a.id) - tileNumericId(b.id);
+  if (delta !== 0) {
+    return delta;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function isBoardTile(tile: Tile): tile is Tile & { zone: "board"; row: number; col: number } {
+  return tile.zone === "board" && tile.row !== null && tile.col !== null;
+}
+
 const board = requireElement<HTMLDivElement>("#board");
 const boardCells = requireElement<HTMLDivElement>("#board-cells");
 const boardTiles = requireElement<HTMLDivElement>("#board-tiles");
+const tileShelf = requireElement<HTMLDivElement>("#tile-shelf");
 const playerCountSelect = requireElement<HTMLSelectElement>("#player-count");
 const statusText = requireElement<HTMLParagraphElement>("#status-text");
 const actionText = requireElement<HTMLParagraphElement>("#action-text");
@@ -93,8 +116,8 @@ interface DragState {
   pointerId: number;
   pointerOffsetX: number;
   pointerOffsetY: number;
-  tileSize: number;
-  element: HTMLButtonElement;
+  sourceElement: HTMLButtonElement;
+  dragProxy: HTMLDivElement;
   isOverTradeZone: boolean;
 }
 
@@ -147,10 +170,10 @@ function getBoardMetrics(): { width: number; height: number; cellWidth: number; 
   };
 }
 
-function gridToPoint(tile: Tile): { x: number; y: number } {
+function gridToPoint(row: number, col: number): { x: number; y: number } {
   const metrics = getBoardMetrics();
-  const x = (tile.col - 1) * metrics.cellWidth + (metrics.cellWidth - metrics.tileSize) * 0.5;
-  const y = (tile.row - 1) * metrics.cellHeight + (metrics.cellHeight - metrics.tileSize) * 0.5;
+  const x = (col - 1) * metrics.cellWidth + (metrics.cellWidth - metrics.tileSize) * 0.5;
+  const y = (row - 1) * metrics.cellHeight + (metrics.cellHeight - metrics.tileSize) * 0.5;
   return { x, y };
 }
 
@@ -186,35 +209,66 @@ function renderGrid(): void {
   }
 }
 
-function renderTiles(): void {
+function renderBoardTiles(): void {
   const metrics = getBoardMetrics();
   boardTiles.innerHTML = "";
 
-  const sortedTiles = [...state.tiles].sort((a, b) => {
-    if (a.row !== b.row) {
-      return a.row - b.row;
-    }
-    if (a.col !== b.col) {
-      return a.col - b.col;
-    }
-    return a.id.localeCompare(b.id);
-  });
+  const sortedTiles = state.tiles
+    .filter(isBoardTile)
+    .sort((a, b) => {
+      if (a.row !== b.row) {
+        return a.row - b.row;
+      }
+      if (a.col !== b.col) {
+        return a.col - b.col;
+      }
+      return compareByTileId(a, b);
+    });
 
   for (const tile of sortedTiles) {
     const tileElement = document.createElement("button");
     tileElement.type = "button";
-    tileElement.className = "tile";
+    tileElement.className = "tile board-tile";
     tileElement.dataset.tileId = tile.id;
     tileElement.textContent = tile.letter;
     tileElement.style.width = `${metrics.tileSize}px`;
     tileElement.style.height = `${metrics.tileSize}px`;
     tileElement.style.fontSize = `${Math.max(12, metrics.tileSize * 0.42)}px`;
 
-    const point = gridToPoint(tile);
+    const point = gridToPoint(tile.row, tile.col);
     tileElement.style.transform = `translate(${point.x}px, ${point.y}px)`;
     tileElement.addEventListener("pointerdown", (event) => startDrag(event, tile, tileElement));
 
     boardTiles.append(tileElement);
+  }
+}
+
+function renderShelfTiles(): void {
+  const metrics = getBoardMetrics();
+  tileShelf.innerHTML = "";
+
+  const shelfTileSize = Math.round(Math.max(42, Math.min(66, metrics.tileSize)));
+  const shelfTiles = state.tiles.filter((tile) => tile.zone === "staging").sort(compareByTileId);
+
+  if (shelfTiles.length === 0) {
+    const message = document.createElement("p");
+    message.className = "tile-shelf-empty";
+    message.textContent = "Shelf is empty.";
+    tileShelf.append(message);
+    return;
+  }
+
+  for (const tile of shelfTiles) {
+    const tileElement = document.createElement("button");
+    tileElement.type = "button";
+    tileElement.className = "tile shelf-tile";
+    tileElement.dataset.tileId = tile.id;
+    tileElement.textContent = tile.letter;
+    tileElement.style.width = `${shelfTileSize}px`;
+    tileElement.style.height = `${shelfTileSize}px`;
+    tileElement.style.fontSize = `${Math.max(12, shelfTileSize * 0.42)}px`;
+    tileElement.addEventListener("pointerdown", (event) => startDrag(event, tile, tileElement));
+    tileShelf.append(tileElement);
   }
 }
 
@@ -251,9 +305,22 @@ function render(): void {
   if (state.status !== "running") {
     clearPressureLoop();
   }
-  renderTiles();
+  renderBoardTiles();
+  renderShelfTiles();
   renderStatus();
   renderTradeZoneState(false);
+}
+
+function createDragProxy(sourceElement: HTMLButtonElement, letter: string): HTMLDivElement {
+  const rect = sourceElement.getBoundingClientRect();
+  const proxy = document.createElement("div");
+  proxy.className = "tile tile-proxy";
+  proxy.textContent = letter;
+  proxy.style.width = `${rect.width}px`;
+  proxy.style.height = `${rect.height}px`;
+  proxy.style.fontSize = window.getComputedStyle(sourceElement).fontSize;
+  document.body.append(proxy);
+  return proxy;
 }
 
 function updateDraggedTilePosition(clientX: number, clientY: number): void {
@@ -261,10 +328,9 @@ function updateDraggedTilePosition(clientX: number, clientY: number): void {
     return;
   }
 
-  const rect = board.getBoundingClientRect();
-  const x = clientX - rect.left - drag.pointerOffsetX;
-  const y = clientY - rect.top - drag.pointerOffsetY;
-  drag.element.style.transform = `translate(${x}px, ${y}px)`;
+  const x = clientX - drag.pointerOffsetX;
+  const y = clientY - drag.pointerOffsetY;
+  drag.dragProxy.style.transform = `translate(${x}px, ${y}px)`;
 }
 
 function stopDraggingVisualState(): void {
@@ -278,15 +344,17 @@ function endDrag(event: PointerEvent): void {
     return;
   }
 
-  const draggedTileId = drag.tileId;
+  const activeDrag = drag;
+  const draggedTileId = activeDrag.tileId;
   const dropInTrade =
-    drag.isOverTradeZone || pointerInsideElement(event.clientX, event.clientY, tradeZone);
+    activeDrag.isOverTradeZone || pointerInsideElement(event.clientX, event.clientY, tradeZone);
   const targetCell = pointerToCell(event.clientX, event.clientY);
 
-  drag.element.classList.remove("tile-dragging");
-  if (drag.element.hasPointerCapture(event.pointerId)) {
-    drag.element.releasePointerCapture(event.pointerId);
+  activeDrag.sourceElement.classList.remove("tile-source-dragging");
+  if (activeDrag.sourceElement.hasPointerCapture(event.pointerId)) {
+    activeDrag.sourceElement.releasePointerCapture(event.pointerId);
   }
+  activeDrag.dragProxy.remove();
 
   document.removeEventListener("pointermove", onDragMove);
   document.removeEventListener("pointerup", endDrag);
@@ -319,24 +387,29 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
     return;
   }
 
-  const metrics = getBoardMetrics();
-  const snapped = gridToPoint(tile);
-  const rect = board.getBoundingClientRect();
+  if (drag) {
+    return;
+  }
+
+  const sourceRect = element.getBoundingClientRect();
+  const dragProxy = createDragProxy(element, tile.letter);
 
   drag = {
     tileId: tile.id,
     pointerId: event.pointerId,
-    pointerOffsetX: event.clientX - (rect.left + snapped.x),
-    pointerOffsetY: event.clientY - (rect.top + snapped.y),
-    tileSize: metrics.tileSize,
-    element,
+    pointerOffsetX: event.clientX - sourceRect.left,
+    pointerOffsetY: event.clientY - sourceRect.top,
+    sourceElement: element,
+    dragProxy,
     isOverTradeZone: false,
   };
 
   board.classList.add("board-drag-active");
   document.body.classList.add("dragging-active");
-  element.classList.add("tile-dragging");
+  element.classList.add("tile-source-dragging");
   element.setPointerCapture(event.pointerId);
+
+  updateDraggedTilePosition(event.clientX, event.clientY);
 
   document.addEventListener("pointermove", onDragMove);
   document.addEventListener("pointerup", endDrag);
@@ -366,7 +439,8 @@ playerCountSelect.addEventListener("change", () => {
 });
 
 const boardResizeObserver = new ResizeObserver(() => {
-  renderTiles();
+  renderBoardTiles();
+  renderShelfTiles();
 });
 boardResizeObserver.observe(board);
 

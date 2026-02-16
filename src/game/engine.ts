@@ -1,4 +1,5 @@
 export type GameStatus = "running" | "won" | "lost";
+export type TileZone = "board" | "staging";
 
 export interface GameConfig {
   rows: number;
@@ -11,8 +12,9 @@ export interface GameConfig {
 export interface Tile {
   id: string;
   letter: string;
-  row: number;
-  col: number;
+  zone: TileZone;
+  row: number | null;
+  col: number | null;
 }
 
 export interface GameState {
@@ -198,23 +200,6 @@ function cloneState(state: GameState): GameState {
   };
 }
 
-function firstOpenCell(state: GameState): { row: number; col: number } | null {
-  const occupied = new Set<string>();
-  for (const tile of state.tiles) {
-    occupied.add(`${tile.row}:${tile.col}`);
-  }
-
-  for (let row = 1; row <= state.config.rows; row += 1) {
-    for (let col = 1; col <= state.config.cols; col += 1) {
-      if (!occupied.has(`${row}:${col}`)) {
-        return { row, col };
-      }
-    }
-  }
-
-  return null;
-}
-
 function drawOne(drawPile: string[]): string | null {
   const next = drawPile.shift();
   return next ?? null;
@@ -226,16 +211,12 @@ function addVisibleTile(state: GameState): boolean {
     return false;
   }
 
-  const cell = firstOpenCell(state);
-  if (!cell) {
-    return false;
-  }
-
   state.tiles.push({
     id: `t${state.nextTileId}`,
     letter,
-    row: cell.row,
-    col: cell.col,
+    zone: "staging",
+    row: null,
+    col: null,
   });
   state.nextTileId += 1;
   return true;
@@ -258,6 +239,18 @@ function canServeRound(state: GameState): boolean {
 function insertLetterIntoBag(drawPile: string[], letter: string, rng: RandomSource): void {
   const slot = Math.floor(rng() * (drawPile.length + 1));
   drawPile.splice(slot, 0, letter);
+}
+
+function moveTileToStaging(tile: Tile): void {
+  tile.zone = "staging";
+  tile.row = null;
+  tile.col = null;
+}
+
+function moveTileToBoard(tile: Tile, row: number, col: number): void {
+  tile.zone = "board";
+  tile.row = row;
+  tile.col = col;
 }
 
 function performServeRound(baseState: GameState): GameState {
@@ -300,7 +293,7 @@ export function createGame(
 
   return {
     ...state,
-    lastAction: "Board seeded. Drag tiles, trade one-for-three, and keep serving.",
+    lastAction: "Shelf stocked. Drag tiles onto the board, trade one-for-three, and keep serving.",
   };
 }
 
@@ -395,20 +388,28 @@ export function moveTile(baseState: GameState, tileId: string, targetRow: number
 
   const row = Math.max(1, Math.min(next.config.rows, Math.round(targetRow)));
   const col = Math.max(1, Math.min(next.config.cols, Math.round(targetCol)));
-  const occupied = next.tiles.find((item) => item.id !== tileId && item.row === row && item.col === col);
+  const occupied = next.tiles.find(
+    (item) => item.id !== tileId && item.zone === "board" && item.row === row && item.col === col,
+  );
 
+  const movedFromBoard = tile.zone === "board";
   const originalRow = tile.row;
   const originalCol = tile.col;
-  tile.row = row;
-  tile.col = col;
+  moveTileToBoard(tile, row, col);
 
   if (occupied) {
-    occupied.row = originalRow;
-    occupied.col = originalCol;
+    if (movedFromBoard && originalRow !== null && originalCol !== null) {
+      moveTileToBoard(occupied, originalRow, originalCol);
+      next.lastAction = `Swapped ${tile.letter} with ${occupied.letter}.`;
+    } else {
+      moveTileToStaging(occupied);
+      next.lastAction = `Placed ${tile.letter} on ${row},${col}; ${occupied.letter} moved to shelf.`;
+    }
+    return next;
   }
 
-  next.lastAction = occupied
-    ? `Swapped ${tile.letter} with ${occupied.letter}.`
-    : `Moved ${tile.letter} to ${row},${col}.`;
+  next.lastAction = movedFromBoard
+    ? `Moved ${tile.letter} to ${row},${col}.`
+    : `Placed ${tile.letter} on ${row},${col}.`;
   return next;
 }

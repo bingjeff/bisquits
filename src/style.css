@@ -170,9 +170,6 @@ h1 {
 }
 
 .tile {
-  position: absolute;
-  top: 0;
-  left: 0;
   display: grid;
   place-items: center;
   border-radius: 22%;
@@ -183,37 +180,59 @@ h1 {
   color: #31230f;
   font-family: "Fraunces", Georgia, serif;
   font-weight: 700;
-  cursor: grab;
-  touch-action: none;
+  line-height: 1;
   box-shadow:
     0 10px 13px rgba(48, 36, 20, 0.16),
     inset 0 -2px 0 rgba(191, 162, 115, 0.35);
+}
+
+.board-tile {
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: grab;
+  touch-action: none;
   transition: transform 130ms ease, box-shadow 130ms ease;
 }
 
-.tile:active {
+.shelf-tile {
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+  transition: transform 130ms ease, box-shadow 130ms ease;
+}
+
+.board-tile:active,
+.shelf-tile:active {
   cursor: grabbing;
 }
 
-.tile:hover {
+.board-tile:hover,
+.shelf-tile:hover {
   box-shadow:
     0 12px 16px rgba(48, 36, 20, 0.2),
     inset 0 -2px 0 rgba(191, 162, 115, 0.45);
 }
 
-.tile-dragging {
+.tile-proxy {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  pointer-events: none;
   transition: none;
-  z-index: 10;
   box-shadow:
     0 18px 20px rgba(31, 21, 11, 0.23),
     inset 0 -2px 0 rgba(191, 162, 115, 0.45);
 }
 
+.tile-source-dragging {
+  opacity: 0.28;
+}
+
 .board-drag-active {
   outline: 2px solid rgba(23, 102, 107, 0.4);
   outline-offset: 2px;
-  overflow: visible;
-  z-index: 2;
 }
 
 .hud-panel {
@@ -262,6 +281,25 @@ h1 {
   margin: 0.2rem 0 0;
   color: var(--ink-soft);
   font-size: 0.96rem;
+}
+
+.tile-shelf {
+  margin-top: 0.5rem;
+  min-height: 82px;
+  border: 1px solid rgba(107, 84, 52, 0.22);
+  border-radius: 10px;
+  background: rgba(245, 235, 215, 0.8);
+  padding: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tile-shelf-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
 }
 
 .trade-zone {
