@@ -233,7 +233,7 @@ function renderBoardTiles(): void {
     tileElement.textContent = tile.letter;
     tileElement.style.width = `${metrics.tileSize}px`;
     tileElement.style.height = `${metrics.tileSize}px`;
-    tileElement.style.fontSize = `${Math.max(12, metrics.tileSize * 0.42)}px`;
+    tileElement.style.fontSize = `${Math.max(20, metrics.tileSize * 0.7)}px`;
 
     const point = gridToPoint(tile.row, tile.col);
     tileElement.style.transform = `translate(${point.x}px, ${point.y}px)`;
@@ -266,7 +266,7 @@ function renderShelfTiles(): void {
     tileElement.textContent = tile.letter;
     tileElement.style.width = `${shelfTileSize}px`;
     tileElement.style.height = `${shelfTileSize}px`;
-    tileElement.style.fontSize = `${Math.max(12, shelfTileSize * 0.42)}px`;
+    tileElement.style.fontSize = `${Math.max(20, shelfTileSize * 0.68)}px`;
     tileElement.addEventListener("pointerdown", (event) => startDrag(event, tile, tileElement));
     tileShelf.append(tileElement);
   }
