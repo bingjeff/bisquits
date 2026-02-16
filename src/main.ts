@@ -1,3 +1,4 @@
+import { Client as ColyseusClient, type Room } from "colyseus.js";
 import "./style.css";
 import {
   applyPressureTick,
@@ -9,6 +10,61 @@ import {
   type GameState,
   type Tile,
 } from "./game/engine";
+
+interface DragState {
+  tileId: string;
+  pointerId: number;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
+  sourceElement: HTMLButtonElement;
+  dragProxy: HTMLDivElement;
+  isOverTradeZone: boolean;
+}
+
+interface MultiplayerPlayerSnapshot {
+  clientId: string;
+  name: string;
+  ready: boolean;
+  wins: number;
+  gamesPlayed: number;
+  longestWord: string;
+}
+
+interface MultiplayerRoomSnapshot {
+  phase: "lobby" | "playing";
+  ownerClientId: string;
+  lastWinnerName: string;
+  lastLongestWord: string;
+  roundsPlayed: number;
+  players: Record<string, MultiplayerPlayerSnapshot>;
+}
+
+interface RoomNoticeMessage {
+  level?: "info" | "error";
+  message?: string;
+}
+
+interface MatchRecord {
+  roomId: string;
+  winnerName: string;
+  longestWord: string;
+  players: string[];
+  playedAt: string;
+}
+
+interface PlayerAggregate {
+  name: string;
+  gamesPlayed: number;
+  wins: number;
+  longestWord: string;
+  updatedAt: string;
+}
+
+interface StatsSnapshot {
+  totalMatches: number;
+  recentMatches: MatchRecord[];
+  players: Record<string, PlayerAggregate>;
+}
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -42,6 +98,27 @@ app.innerHTML = `
       </section>
 
       <aside class="hud-panel">
+        <div class="hud-card">
+          <p class="label">Multiplayer</p>
+          <p id="net-status" class="metric-subtle">Disconnected</p>
+          <label class="field-label" for="player-name-input">Name</label>
+          <input id="player-name-input" class="text-input" maxlength="20" autocomplete="nickname" />
+          <label class="field-label" for="room-id-input">Room ID (optional)</label>
+          <input id="room-id-input" class="text-input" maxlength="64" placeholder="Join by room id" />
+          <div class="button-row">
+            <button id="create-room-btn" class="button">Create</button>
+            <button id="join-room-btn" class="button button-muted">Join</button>
+          </div>
+          <div class="button-row">
+            <button id="ready-btn" class="button button-muted">Ready</button>
+            <button id="start-room-btn" class="button button-muted">Start</button>
+          </div>
+          <p id="room-details" class="metric-subtle"></p>
+          <ul id="room-player-list" class="player-list"></ul>
+          <p id="room-notice" class="room-notice"></p>
+          <p id="stats-summary" class="metric-subtle"></p>
+        </div>
+
         <div class="hud-card">
           <p class="label">Status</p>
           <p id="status-text" class="status-text"></p>
@@ -110,6 +187,18 @@ function isBoardTile(tile: Tile): tile is Tile & { zone: "board"; row: number; c
   return tile.zone === "board" && tile.row !== null && tile.col !== null;
 }
 
+function sanitizePlayerName(name: string): string {
+  return (name.trim().replace(/\s+/g, " ").replace(/[^\w -]/g, "").slice(0, 20) || "Player").trim();
+}
+
+function getRoomSnapshot(room: Room): MultiplayerRoomSnapshot | null {
+  const state = room.state as { toJSON?: () => unknown } | null | undefined;
+  if (!state || typeof state.toJSON !== "function") {
+    return null;
+  }
+  return state.toJSON() as MultiplayerRoomSnapshot;
+}
+
 const board = requireElement<HTMLDivElement>("#board");
 const boardCells = requireElement<HTMLDivElement>("#board-cells");
 const boardTiles = requireElement<HTMLDivElement>("#board-tiles");
@@ -118,6 +207,7 @@ const winOverlay = requireElement<HTMLDivElement>("#win-overlay");
 const winningTable = requireElement<HTMLDivElement>("#winning-table");
 const overlayResetButton = requireElement<HTMLButtonElement>("#overlay-reset-btn");
 const overlayCloseButton = requireElement<HTMLButtonElement>("#overlay-close-btn");
+
 const playerCountSelect = requireElement<HTMLSelectElement>("#player-count");
 const statusText = requireElement<HTMLParagraphElement>("#status-text");
 const actionText = requireElement<HTMLParagraphElement>("#action-text");
@@ -127,17 +217,26 @@ const tradeZone = requireElement<HTMLDivElement>("#trade-zone");
 const serveButton = requireElement<HTMLButtonElement>("#serve-btn");
 const resetButton = requireElement<HTMLButtonElement>("#reset-btn");
 
-interface DragState {
-  tileId: string;
-  pointerId: number;
-  pointerOffsetX: number;
-  pointerOffsetY: number;
-  sourceElement: HTMLButtonElement;
-  dragProxy: HTMLDivElement;
-  isOverTradeZone: boolean;
-}
+const netStatus = requireElement<HTMLParagraphElement>("#net-status");
+const playerNameInput = requireElement<HTMLInputElement>("#player-name-input");
+const roomIdInput = requireElement<HTMLInputElement>("#room-id-input");
+const createRoomButton = requireElement<HTMLButtonElement>("#create-room-btn");
+const joinRoomButton = requireElement<HTMLButtonElement>("#join-room-btn");
+const readyButton = requireElement<HTMLButtonElement>("#ready-btn");
+const startRoomButton = requireElement<HTMLButtonElement>("#start-room-btn");
+const roomDetails = requireElement<HTMLParagraphElement>("#room-details");
+const roomPlayerList = requireElement<HTMLUListElement>("#room-player-list");
+const roomNotice = requireElement<HTMLParagraphElement>("#room-notice");
+const statsSummary = requireElement<HTMLParagraphElement>("#stats-summary");
 
 const rng = Math.random;
+const localNameSeed = Math.floor(100 + Math.random() * 900);
+playerNameInput.value = `Player ${localNameSeed}`;
+
+const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+const defaultColyseusEndpoint = `${wsProtocol}://${window.location.hostname}:2567`;
+const colyseusEndpoint = import.meta.env.VITE_COLYSEUS_URL || defaultColyseusEndpoint;
+const multiplayerClient = new ColyseusClient(colyseusEndpoint);
 
 let state: GameState = createGame({ players: Number(playerCountSelect.value) }, rng);
 let drag: DragState | null = null;
@@ -145,32 +244,15 @@ let pressureTimer: number | null = null;
 let pressureDeadline = 0;
 let isWinOverlayDismissed = false;
 
+let multiplayerRoom: Room | null = null;
+let multiplayerSnapshot: MultiplayerRoomSnapshot | null = null;
+let multiplayerStats: StatsSnapshot | null = null;
+let roomNoticeLevel: "info" | "error" = "info";
+let roomNoticeMessage = "";
+
 function randomInRange([min, max]: [number, number]): number {
   const span = max - min;
   return Math.round(min + rng() * span);
-}
-
-function clearPressureLoop(): void {
-  if (pressureTimer !== null) {
-    window.clearTimeout(pressureTimer);
-    pressureTimer = null;
-  }
-  pressureDeadline = 0;
-}
-
-function schedulePressureLoop(): void {
-  clearPressureLoop();
-  if (state.status !== "running") {
-    return;
-  }
-
-  const delay = randomInRange(state.config.pressureRangeMs);
-  pressureDeadline = Date.now() + delay;
-  pressureTimer = window.setTimeout(() => {
-    state = applyPressureTick(state);
-    render();
-    schedulePressureLoop();
-  }, delay);
 }
 
 function getBoardMetrics(): { width: number; height: number; cellWidth: number; cellHeight: number; tileSize: number } {
@@ -210,6 +292,184 @@ function pointerToCell(clientX: number, clientY: number): { row: number; col: nu
   const col = Math.min(state.config.cols, Math.max(1, Math.floor((x / rect.width) * state.config.cols) + 1));
   const row = Math.min(state.config.rows, Math.max(1, Math.floor((y / rect.height) * state.config.rows) + 1));
   return { row, col };
+}
+
+function getLocalRoomPlayer(): MultiplayerPlayerSnapshot | null {
+  if (!multiplayerRoom || !multiplayerSnapshot) {
+    return null;
+  }
+  return multiplayerSnapshot.players[multiplayerRoom.sessionId] ?? null;
+}
+
+function setRoomNotice(level: "info" | "error", message: string): void {
+  roomNoticeLevel = level;
+  roomNoticeMessage = message;
+}
+
+function clearPressureLoop(): void {
+  if (pressureTimer !== null) {
+    window.clearTimeout(pressureTimer);
+    pressureTimer = null;
+  }
+  pressureDeadline = 0;
+}
+
+function schedulePressureLoop(): void {
+  clearPressureLoop();
+  if (state.status !== "running") {
+    return;
+  }
+
+  const delay = randomInRange(state.config.pressureRangeMs);
+  pressureDeadline = Date.now() + delay;
+  pressureTimer = window.setTimeout(() => {
+    state = applyPressureTick(state);
+    render();
+    schedulePressureLoop();
+  }, delay);
+}
+
+function computeLongestWordFromBoard(gameState: GameState): string {
+  const boardLetters = new Map<string, string>();
+  for (const tile of gameState.tiles.filter(isBoardTile)) {
+    boardLetters.set(`${tile.row}:${tile.col}`, tile.letter);
+  }
+
+  let best = "";
+  const updateBest = (candidate: string): void => {
+    if (candidate.length > best.length) {
+      best = candidate;
+    }
+  };
+
+  for (let row = 1; row <= gameState.config.rows; row += 1) {
+    let sequence = "";
+    for (let col = 1; col <= gameState.config.cols; col += 1) {
+      const letter = boardLetters.get(`${row}:${col}`);
+      if (letter) {
+        sequence += letter;
+      } else {
+        if (sequence.length >= 2) {
+          updateBest(sequence);
+        }
+        sequence = "";
+      }
+    }
+    if (sequence.length >= 2) {
+      updateBest(sequence);
+    }
+  }
+
+  for (let col = 1; col <= gameState.config.cols; col += 1) {
+    let sequence = "";
+    for (let row = 1; row <= gameState.config.rows; row += 1) {
+      const letter = boardLetters.get(`${row}:${col}`);
+      if (letter) {
+        sequence += letter;
+      } else {
+        if (sequence.length >= 2) {
+          updateBest(sequence);
+        }
+        sequence = "";
+      }
+    }
+    if (sequence.length >= 2) {
+      updateBest(sequence);
+    }
+  }
+
+  return best;
+}
+
+async function leaveRoomSilently(): Promise<void> {
+  if (!multiplayerRoom) {
+    return;
+  }
+  const roomToLeave = multiplayerRoom;
+  multiplayerRoom = null;
+  multiplayerSnapshot = null;
+  try {
+    await roomToLeave.leave();
+  } catch {
+    // Ignore disconnect errors on teardown.
+  }
+}
+
+function attachRoom(room: Room): void {
+  multiplayerRoom = room;
+  multiplayerSnapshot = getRoomSnapshot(room);
+  roomIdInput.value = room.roomId;
+  setRoomNotice("info", `Connected to room ${room.roomId}.`);
+
+  room.onStateChange(() => {
+    multiplayerSnapshot = getRoomSnapshot(room);
+    renderMultiplayerPanel();
+  });
+
+  room.onMessage("room_notice", (payload: RoomNoticeMessage) => {
+    setRoomNotice(payload?.level ?? "info", payload?.message ?? "");
+    renderMultiplayerPanel();
+  });
+
+  room.onMessage("stats_snapshot", (payload: StatsSnapshot) => {
+    multiplayerStats = payload;
+    renderMultiplayerPanel();
+  });
+
+  room.onMessage("game_started", () => {
+    setRoomNotice("info", "Game started.");
+    resetGame(Number(playerCountSelect.value));
+    renderMultiplayerPanel();
+  });
+
+  room.onMessage("game_finished", (payload: { winnerName?: string; longestWord?: string }) => {
+    const winnerName = payload?.winnerName ?? "Unknown";
+    const longestWord = payload?.longestWord ? `, longest word: ${payload.longestWord}` : "";
+    setRoomNotice("info", `${winnerName} won${longestWord}.`);
+    renderMultiplayerPanel();
+  });
+
+  room.onError((code, message) => {
+    setRoomNotice("error", `Network error (${code}): ${message}`);
+    renderMultiplayerPanel();
+  });
+
+  room.onLeave((code) => {
+    multiplayerRoom = null;
+    multiplayerSnapshot = null;
+    setRoomNotice("error", `Disconnected from room (code ${code}).`);
+    renderMultiplayerPanel();
+  });
+}
+
+async function connectToRoom(mode: "create" | "join"): Promise<void> {
+  const playerName = sanitizePlayerName(playerNameInput.value);
+  playerNameInput.value = playerName;
+  const roomId = roomIdInput.value.trim();
+
+  createRoomButton.disabled = true;
+  joinRoomButton.disabled = true;
+
+  try {
+    await leaveRoomSilently();
+    let joinedRoom: Room;
+    if (mode === "create") {
+      joinedRoom = await multiplayerClient.create("bisquits", { name: playerName });
+    } else if (roomId) {
+      joinedRoom = await multiplayerClient.joinById(roomId, { name: playerName });
+    } else {
+      joinedRoom = await multiplayerClient.joinOrCreate("bisquits", { name: playerName });
+    }
+    attachRoom(joinedRoom);
+    renderMultiplayerPanel();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to join room.";
+    setRoomNotice("error", message);
+    renderMultiplayerPanel();
+  } finally {
+    createRoomButton.disabled = false;
+    joinRoomButton.disabled = false;
+  }
 }
 
 function renderGrid(): void {
@@ -357,6 +617,61 @@ function renderWinOverlay(): void {
   }
 }
 
+function renderMultiplayerPanel(): void {
+  const currentRoom = multiplayerRoom;
+  const snapshot = multiplayerSnapshot;
+  if (!currentRoom || !snapshot) {
+    netStatus.textContent = `Disconnected (${colyseusEndpoint})`;
+    roomDetails.textContent = "";
+    roomPlayerList.innerHTML = "";
+    readyButton.disabled = true;
+    startRoomButton.disabled = true;
+    readyButton.textContent = "Ready";
+    startRoomButton.textContent = "Start";
+  } else {
+    const localPlayer = snapshot.players[currentRoom.sessionId] ?? null;
+    const phase = snapshot.phase;
+    netStatus.textContent = `Connected · ${phase}`;
+    const playerCount = Object.keys(snapshot.players).length;
+    roomDetails.textContent = `Room ${currentRoom.roomId} · ${playerCount}/4 players`;
+
+    roomPlayerList.innerHTML = "";
+    const players = Object.values(snapshot.players).sort((a, b) => a.name.localeCompare(b.name));
+    for (const player of players) {
+      const item = document.createElement("li");
+      item.className = "player-list-item";
+      const isHost = snapshot.ownerClientId === player.clientId;
+      const isSelf = currentRoom.sessionId === player.clientId;
+      const readyToken = player.ready ? "ready" : "not ready";
+      const tag = `${isHost ? "host · " : ""}${isSelf ? "you · " : ""}${readyToken}`;
+      const longestWord = player.longestWord ? ` · best: ${player.longestWord}` : "";
+      item.textContent = `${player.name} (${tag}) · ${player.wins}W/${player.gamesPlayed}G${longestWord}`;
+      roomPlayerList.append(item);
+    }
+
+    readyButton.disabled = !localPlayer || snapshot.phase === "playing";
+    readyButton.textContent = localPlayer?.ready ? "Unready" : "Ready";
+
+    const canStart =
+      snapshot.phase === "lobby" &&
+      snapshot.ownerClientId === currentRoom.sessionId &&
+      Object.keys(snapshot.players).length >= 2;
+    startRoomButton.disabled = !canStart;
+    startRoomButton.textContent = snapshot.phase === "playing" ? "Playing" : "Start";
+  }
+
+  roomNotice.textContent = roomNoticeMessage;
+  roomNotice.classList.toggle("room-notice-error", roomNoticeLevel === "error");
+
+  const latestMatch = multiplayerStats?.recentMatches?.[0];
+  if (latestMatch) {
+    const longestWordLabel = latestMatch.longestWord ? ` · longest: ${latestMatch.longestWord}` : "";
+    statsSummary.textContent = `Last game: ${latestMatch.winnerName}${longestWordLabel} · Total matches: ${multiplayerStats?.totalMatches ?? 0}`;
+  } else {
+    statsSummary.textContent = "No completed multiplayer games recorded yet.";
+  }
+}
+
 function render(): void {
   if (state.status !== "running") {
     clearPressureLoop();
@@ -366,6 +681,7 @@ function render(): void {
   renderStatus();
   renderTradeZoneState(false);
   renderWinOverlay();
+  renderMultiplayerPanel();
 }
 
 function createDragProxy(sourceElement: HTMLButtonElement, letter: string): HTMLDivElement {
@@ -440,11 +756,7 @@ function onDragMove(event: PointerEvent): void {
 }
 
 function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement): void {
-  if (state.status !== "running") {
-    return;
-  }
-
-  if (drag) {
+  if (state.status !== "running" || drag) {
     return;
   }
 
@@ -475,6 +787,14 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
   event.preventDefault();
 }
 
+function reportWinToRoom(): void {
+  if (!multiplayerRoom || multiplayerSnapshot?.phase !== "playing") {
+    return;
+  }
+  const longestWord = computeLongestWordFromBoard(state);
+  multiplayerRoom.send("finish_game", { longestWord });
+}
+
 function resetGame(players: number): void {
   state = createGame({ players }, rng);
   isWinOverlayDismissed = false;
@@ -483,10 +803,39 @@ function resetGame(players: number): void {
   schedulePressureLoop();
 }
 
+createRoomButton.addEventListener("click", () => {
+  void connectToRoom("create");
+});
+
+joinRoomButton.addEventListener("click", () => {
+  void connectToRoom("join");
+});
+
+readyButton.addEventListener("click", () => {
+  if (!multiplayerRoom) {
+    return;
+  }
+  const localPlayer = getLocalRoomPlayer();
+  multiplayerRoom.send("set_ready", { ready: !localPlayer?.ready });
+});
+
+startRoomButton.addEventListener("click", () => {
+  multiplayerRoom?.send("start_game");
+});
+
+playerNameInput.addEventListener("change", () => {
+  const nextName = sanitizePlayerName(playerNameInput.value);
+  playerNameInput.value = nextName;
+  if (multiplayerRoom) {
+    multiplayerRoom.send("set_name", { name: nextName });
+  }
+});
+
 serveButton.addEventListener("click", () => {
   state = servePlate(state);
   if (state.status === "won") {
     isWinOverlayDismissed = false;
+    reportWinToRoom();
   }
   render();
 });
@@ -513,6 +862,10 @@ const boardResizeObserver = new ResizeObserver(() => {
   renderShelfTiles();
 });
 boardResizeObserver.observe(board);
+
+window.addEventListener("beforeunload", () => {
+  void leaveRoomSilently();
+});
 
 window.setInterval(() => {
   if (state.status === "running") {

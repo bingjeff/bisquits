@@ -99,7 +99,8 @@ h1 {
 }
 
 .select,
-.button {
+.button,
+.text-input {
   appearance: none;
   border: 1px solid rgba(61, 50, 33, 0.28);
   border-radius: 10px;
@@ -123,7 +124,7 @@ h1 {
 
 .layout {
   display: grid;
-  grid-template-columns: 1fr 290px;
+  grid-template-columns: 1fr 340px;
   gap: clamp(0.9rem, 2.2vw, 1.5rem);
 }
 
@@ -259,6 +260,20 @@ h1 {
   font-weight: 700;
 }
 
+.field-label {
+  display: block;
+  margin: 0.65rem 0 0.28rem;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.text-input {
+  width: 100%;
+}
+
 .status-text {
   margin: 0.2rem 0 0;
   font-size: 1.24rem;
@@ -282,6 +297,30 @@ h1 {
   margin: 0.2rem 0 0;
   color: var(--ink-soft);
   font-size: 0.96rem;
+}
+
+.player-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+  color: var(--ink-soft);
+  display: grid;
+  gap: 0.22rem;
+}
+
+.player-list-item {
+  font-size: 0.82rem;
+}
+
+.room-notice {
+  margin: 0.55rem 0 0;
+  min-height: 1.2em;
+  color: #265b60;
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.room-notice-error {
+  color: #8a352d;
 }
 
 .tile-shelf {

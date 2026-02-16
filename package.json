@@ -6,16 +6,31 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev:client": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:mp": "concurrently -n client,server -c yellow,cyan \"pnpm dev:client\" \"pnpm dev:server\"",
+    "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "pnpm typecheck:client && pnpm typecheck:server",
+    "typecheck:client": "tsc --noEmit",
+    "typecheck:server": "tsc --noEmit -p tsconfig.server.json",
+    "server": "tsx server/index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.29.3",
   "devDependencies": {
+    "@types/node": "^25.2.3",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^4.0.12",
+    "@colyseus/ws-transport": "^0.17.9",
+    "colyseus": "^0.17.8",
+    "colyseus.js": "^0.16.22"
   }
 }
