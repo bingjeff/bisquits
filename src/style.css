@@ -1,0 +1,19 @@
+:root {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  background: #f2f4f5;
+  color: #111;
+}
+
+.shell {
+  max-width: 720px;
+  margin: 4rem auto;
+  padding: 1.5rem;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 0.5rem;
+}
