@@ -95,6 +95,7 @@ interface DragState {
   pointerOffsetY: number;
   tileSize: number;
   element: HTMLButtonElement;
+  isOverTradeZone: boolean;
 }
 
 const rng = Math.random;
@@ -261,15 +262,8 @@ function updateDraggedTilePosition(clientX: number, clientY: number): void {
   }
 
   const rect = board.getBoundingClientRect();
-  const minX = 0;
-  const maxX = rect.width - drag.tileSize;
-  const minY = 0;
-  const maxY = rect.height - drag.tileSize;
-
-  const rawX = clientX - rect.left - drag.pointerOffsetX;
-  const rawY = clientY - rect.top - drag.pointerOffsetY;
-  const x = Math.max(minX, Math.min(maxX, rawX));
-  const y = Math.max(minY, Math.min(maxY, rawY));
+  const x = clientX - rect.left - drag.pointerOffsetX;
+  const y = clientY - rect.top - drag.pointerOffsetY;
   drag.element.style.transform = `translate(${x}px, ${y}px)`;
 }
 
@@ -285,12 +279,18 @@ function endDrag(event: PointerEvent): void {
   }
 
   const draggedTileId = drag.tileId;
-  const dropInTrade = pointerInsideElement(event.clientX, event.clientY, tradeZone);
+  const dropInTrade =
+    drag.isOverTradeZone || pointerInsideElement(event.clientX, event.clientY, tradeZone);
   const targetCell = pointerToCell(event.clientX, event.clientY);
 
-  window.removeEventListener("pointermove", onDragMove);
-  window.removeEventListener("pointerup", endDrag);
-  window.removeEventListener("pointercancel", endDrag);
+  drag.element.classList.remove("tile-dragging");
+  if (drag.element.hasPointerCapture(event.pointerId)) {
+    drag.element.releasePointerCapture(event.pointerId);
+  }
+
+  document.removeEventListener("pointermove", onDragMove);
+  document.removeEventListener("pointerup", endDrag);
+  document.removeEventListener("pointercancel", endDrag);
 
   drag = null;
   stopDraggingVisualState();
@@ -310,8 +310,8 @@ function onDragMove(event: PointerEvent): void {
   }
 
   updateDraggedTilePosition(event.clientX, event.clientY);
-  const isHoveringTrade = pointerInsideElement(event.clientX, event.clientY, tradeZone);
-  renderTradeZoneState(isHoveringTrade);
+  drag.isOverTradeZone = pointerInsideElement(event.clientX, event.clientY, tradeZone);
+  renderTradeZoneState(drag.isOverTradeZone);
 }
 
 function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement): void {
@@ -330,6 +330,7 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
     pointerOffsetY: event.clientY - (rect.top + snapped.y),
     tileSize: metrics.tileSize,
     element,
+    isOverTradeZone: false,
   };
 
   board.classList.add("board-drag-active");
@@ -337,9 +338,9 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
   element.classList.add("tile-dragging");
   element.setPointerCapture(event.pointerId);
 
-  window.addEventListener("pointermove", onDragMove);
-  window.addEventListener("pointerup", endDrag);
-  window.addEventListener("pointercancel", endDrag);
+  document.addEventListener("pointermove", onDragMove);
+  document.addEventListener("pointerup", endDrag);
+  document.addEventListener("pointercancel", endDrag);
 
   event.preventDefault();
 }

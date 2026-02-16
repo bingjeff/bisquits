@@ -212,6 +212,8 @@ h1 {
 .board-drag-active {
   outline: 2px solid rgba(23, 102, 107, 0.4);
   outline-offset: 2px;
+  overflow: visible;
+  z-index: 2;
 }
 
 .hud-panel {
