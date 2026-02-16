@@ -71,6 +71,18 @@ app.innerHTML = `
       </aside>
     </section>
   </main>
+  <div id="win-overlay" class="overlay" aria-hidden="true">
+    <div class="overlay-card">
+      <p class="eyebrow">Round Complete</p>
+      <h2 class="overlay-title">Winning Plate</h2>
+      <p class="overlay-subtitle">Final board layout for table review.</p>
+      <div id="winning-table" class="winning-table" aria-label="Winning table"></div>
+      <div class="button-row overlay-actions">
+        <button id="overlay-reset-btn" class="button">New Round</button>
+        <button id="overlay-close-btn" class="button button-muted">Close</button>
+      </div>
+    </div>
+  </div>
 `;
 
 function requireElement<T extends Element>(selector: string): T {
@@ -102,6 +114,10 @@ const board = requireElement<HTMLDivElement>("#board");
 const boardCells = requireElement<HTMLDivElement>("#board-cells");
 const boardTiles = requireElement<HTMLDivElement>("#board-tiles");
 const tileShelf = requireElement<HTMLDivElement>("#tile-shelf");
+const winOverlay = requireElement<HTMLDivElement>("#win-overlay");
+const winningTable = requireElement<HTMLDivElement>("#winning-table");
+const overlayResetButton = requireElement<HTMLButtonElement>("#overlay-reset-btn");
+const overlayCloseButton = requireElement<HTMLButtonElement>("#overlay-close-btn");
 const playerCountSelect = requireElement<HTMLSelectElement>("#player-count");
 const statusText = requireElement<HTMLParagraphElement>("#status-text");
 const actionText = requireElement<HTMLParagraphElement>("#action-text");
@@ -127,6 +143,7 @@ let state: GameState = createGame({ players: Number(playerCountSelect.value) }, 
 let drag: DragState | null = null;
 let pressureTimer: number | null = null;
 let pressureDeadline = 0;
+let isWinOverlayDismissed = false;
 
 function randomInRange([min, max]: [number, number]): number {
   const span = max - min;
@@ -301,6 +318,45 @@ function renderTradeZoneState(isHovering: boolean): void {
   tradeZone.classList.toggle("trade-zone-disabled", !canTradeTile(state));
 }
 
+function renderWinningTable(): void {
+  winningTable.innerHTML = "";
+  const boardTilesByCell = new Map<string, Tile & { zone: "board"; row: number; col: number }>();
+  for (const tile of state.tiles.filter(isBoardTile)) {
+    boardTilesByCell.set(`${tile.row}:${tile.col}`, tile);
+  }
+
+  for (let row = 1; row <= state.config.rows; row += 1) {
+    for (let col = 1; col <= state.config.cols; col += 1) {
+      const cell = document.createElement("div");
+      cell.className = "winning-cell";
+      if ((row + col) % 2 === 0) {
+        cell.classList.add("winning-cell-alt");
+      }
+
+      const tile = boardTilesByCell.get(`${row}:${col}`);
+      if (tile) {
+        const letter = document.createElement("span");
+        letter.className = "winning-letter";
+        letter.textContent = tile.letter;
+        cell.append(letter);
+      }
+
+      winningTable.append(cell);
+    }
+  }
+}
+
+function renderWinOverlay(): void {
+  const showOverlay = state.status === "won" && !isWinOverlayDismissed;
+  winOverlay.classList.toggle("overlay-visible", showOverlay);
+  winOverlay.setAttribute("aria-hidden", String(!showOverlay));
+  document.body.classList.toggle("overlay-open", showOverlay);
+
+  if (showOverlay) {
+    renderWinningTable();
+  }
+}
+
 function render(): void {
   if (state.status !== "running") {
     clearPressureLoop();
@@ -309,6 +365,7 @@ function render(): void {
   renderShelfTiles();
   renderStatus();
   renderTradeZoneState(false);
+  renderWinOverlay();
 }
 
 function createDragProxy(sourceElement: HTMLButtonElement, letter: string): HTMLDivElement {
@@ -420,6 +477,7 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
 
 function resetGame(players: number): void {
   state = createGame({ players }, rng);
+  isWinOverlayDismissed = false;
   renderGrid();
   render();
   schedulePressureLoop();
@@ -427,10 +485,22 @@ function resetGame(players: number): void {
 
 serveButton.addEventListener("click", () => {
   state = servePlate(state);
+  if (state.status === "won") {
+    isWinOverlayDismissed = false;
+  }
   render();
 });
 
 resetButton.addEventListener("click", () => {
+  resetGame(Number(playerCountSelect.value));
+});
+
+overlayCloseButton.addEventListener("click", () => {
+  isWinOverlayDismissed = true;
+  renderWinOverlay();
+});
+
+overlayResetButton.addEventListener("click", () => {
   resetGame(Number(playerCountSelect.value));
 });
 
