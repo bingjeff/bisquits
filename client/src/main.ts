@@ -121,9 +121,8 @@ app.innerHTML = `
           <div id="connect-view">
             <label class="field-label" for="player-name-input">Name</label>
             <input id="player-name-input" class="text-input" maxlength="20" autocomplete="nickname" />
-            <div class="button-row">
+            <div class="button-row button-row-single">
               <button id="create-room-btn" class="button">Create</button>
-              <button id="join-room-btn" class="button button-muted">Join</button>
             </div>
             <div class="button-row button-row-single">
               <button id="refresh-rooms-btn" class="button button-muted">Refresh Open Rooms</button>
@@ -286,7 +285,6 @@ const sessionView = requireElement<HTMLDivElement>("#session-view");
 const activePlayerName = requireElement<HTMLParagraphElement>("#active-player-name");
 const activeRoomId = requireElement<HTMLParagraphElement>("#active-room-id");
 const createRoomButton = requireElement<HTMLButtonElement>("#create-room-btn");
-const joinRoomButton = requireElement<HTMLButtonElement>("#join-room-btn");
 const refreshRoomsButton = requireElement<HTMLButtonElement>("#refresh-rooms-btn");
 const availableRoomList = requireElement<HTMLUListElement>("#available-room-list");
 const quitRoomButton = requireElement<HTMLButtonElement>("#quit-room-btn");
@@ -589,7 +587,6 @@ async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Prom
   const targetRoomId = explicitRoomId.trim();
 
   createRoomButton.disabled = true;
-  joinRoomButton.disabled = true;
 
   try {
     await leaveRoomSilently();
@@ -611,7 +608,6 @@ async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Prom
     renderMultiplayerPanel();
   } finally {
     createRoomButton.disabled = false;
-    joinRoomButton.disabled = false;
   }
 }
 
@@ -973,10 +969,6 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
 
 createRoomButton.addEventListener("click", () => {
   void connectToRoom("create");
-});
-
-joinRoomButton.addEventListener("click", () => {
-  void connectToRoom("join");
 });
 
 refreshRoomsButton.addEventListener("click", () => {
