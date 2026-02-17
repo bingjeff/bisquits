@@ -791,8 +791,10 @@ function renderMultiplayerPanel(): void {
     roomDetails.textContent = "";
     roomPlayerList.innerHTML = "";
     readyButton.disabled = true;
+    readyButton.classList.add("panel-hidden");
     startRoomButton.disabled = true;
     startRoomButton.classList.add("panel-hidden");
+    roomControlsRow.classList.add("panel-hidden");
     roomControlsRow.classList.add("button-row-single");
     readyButton.textContent = "Ready";
     startRoomButton.textContent = "Start";
@@ -835,14 +837,18 @@ function renderMultiplayerPanel(): void {
       roomPlayerList.append(item);
     }
 
-    readyButton.disabled = !localPlayer || snapshot.phase === "playing";
+    const showReady = snapshot.phase === "lobby";
+    readyButton.classList.toggle("panel-hidden", !showReady);
+    readyButton.disabled = !localPlayer || !showReady;
     readyButton.textContent = localPlayer?.ready ? "Unready" : "Ready";
 
     const isHost = snapshot.ownerClientId === currentRoom.sessionId;
-    startRoomButton.classList.toggle("panel-hidden", !isHost);
-    roomControlsRow.classList.toggle("button-row-single", !isHost);
+    const showStart = showReady && isHost;
+    startRoomButton.classList.toggle("panel-hidden", !showStart);
+    roomControlsRow.classList.toggle("panel-hidden", !showReady && !showStart);
+    roomControlsRow.classList.toggle("button-row-single", !showStart);
     const canStart =
-      snapshot.phase === "lobby" &&
+      showReady &&
       isHost &&
       Object.keys(snapshot.players).length >= 2;
     startRoomButton.disabled = !canStart;
