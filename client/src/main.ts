@@ -140,7 +140,7 @@ app.innerHTML = `
           </div>
         </div>
 
-        <div class="hud-card">
+        <div id="room-card" class="hud-card">
           <p class="label">Room</p>
           <div id="room-controls-row" class="button-row">
             <button id="ready-btn" class="button button-muted">Ready</button>
@@ -158,12 +158,12 @@ app.innerHTML = `
           <p id="action-text" class="action-text"></p>
         </div>
 
-        <div class="hud-card">
+        <div id="bag-card" class="hud-card">
           <p class="label">Bag Remaining</p>
           <p id="bag-count" class="metric-number"></p>
         </div>
 
-        <div class="hud-card">
+        <div id="shelf-card" class="hud-card">
           <p class="label">Tile Shelf</p>
           <div id="tile-shelf" class="tile-shelf" aria-label="Tile shelf"></div>
         </div>
@@ -172,7 +172,7 @@ app.innerHTML = `
           Drop a tile here to trade one for three.
         </div>
 
-        <div class="button-row button-row-single">
+        <div id="serve-row" class="button-row button-row-single">
           <button id="serve-btn" class="button">Serve Plate</button>
         </div>
       </aside>
@@ -288,6 +288,10 @@ const createRoomButton = requireElement<HTMLButtonElement>("#create-room-btn");
 const refreshRoomsButton = requireElement<HTMLButtonElement>("#refresh-rooms-btn");
 const availableRoomList = requireElement<HTMLUListElement>("#available-room-list");
 const quitRoomButton = requireElement<HTMLButtonElement>("#quit-room-btn");
+const roomCard = requireElement<HTMLDivElement>("#room-card");
+const bagCard = requireElement<HTMLDivElement>("#bag-card");
+const shelfCard = requireElement<HTMLDivElement>("#shelf-card");
+const serveRow = requireElement<HTMLDivElement>("#serve-row");
 const roomControlsRow = requireElement<HTMLDivElement>("#room-controls-row");
 const readyButton = requireElement<HTMLButtonElement>("#ready-btn");
 const startRoomButton = requireElement<HTMLButtonElement>("#start-room-btn");
@@ -773,6 +777,11 @@ function renderMultiplayerPanel(): void {
 
   if (!currentRoom || !snapshot) {
     netStatus.textContent = `Disconnected (${colyseusEndpoint})`;
+    roomCard.classList.add("panel-hidden");
+    bagCard.classList.add("panel-hidden");
+    shelfCard.classList.add("panel-hidden");
+    tradeZone.classList.add("panel-hidden");
+    serveRow.classList.add("panel-hidden");
     connectView.classList.remove("panel-hidden");
     connectView.setAttribute("aria-hidden", "false");
     sessionView.classList.add("panel-hidden");
@@ -791,6 +800,11 @@ function renderMultiplayerPanel(): void {
     const localPlayer = snapshot.players[currentRoom.sessionId] ?? null;
     const phase = snapshot.phase;
     netStatus.textContent = `Connected · ${phase}`;
+    roomCard.classList.remove("panel-hidden");
+    bagCard.classList.remove("panel-hidden");
+    shelfCard.classList.remove("panel-hidden");
+    tradeZone.classList.remove("panel-hidden");
+    serveRow.classList.remove("panel-hidden");
     connectView.classList.add("panel-hidden");
     connectView.setAttribute("aria-hidden", "true");
     sessionView.classList.remove("panel-hidden");
