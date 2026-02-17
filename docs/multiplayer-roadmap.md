@@ -6,6 +6,12 @@
   - `lobby` room registration
   - `bisquits` room (max 4 players)
   - name updates, ready state, start signal
+  - server-authoritative actions:
+    - `action_move_tile`
+    - `action_trade_tile`
+    - `action_serve_plate`
+  - server-controlled pressure ticks
+  - authoritative `game_snapshot` broadcasts
   - finish signal and persisted stats snapshot
 - Client multiplayer panel with:
   - create/join room
@@ -18,13 +24,7 @@
 
 ### 1. Move game simulation to server authority
 
-- Host game state on `BisquitsRoom` instead of browser-only.
-- Receive actions from clients:
-  - `move_tile`
-  - `trade_tile`
-  - `serve_plate`
-- Validate actions server-side and reject invalid updates.
-- Broadcast only authoritative state patches to clients.
+- Status: implemented.
 
 ### 2. Support per-player private boards
 

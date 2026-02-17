@@ -66,6 +66,14 @@ interface StatsSnapshot {
   players: Record<string, PlayerAggregate>;
 }
 
+interface GameSnapshotMessage {
+  gameState: GameState;
+  nextPressureAt: number;
+  reason: string;
+  actorClientId?: string;
+  serverTime: number;
+}
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -249,6 +257,7 @@ let multiplayerSnapshot: MultiplayerRoomSnapshot | null = null;
 let multiplayerStats: StatsSnapshot | null = null;
 let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
+let serverNextPressureAt = 0;
 
 function randomInRange([min, max]: [number, number]): number {
   const span = max - min;
@@ -301,6 +310,10 @@ function getLocalRoomPlayer(): MultiplayerPlayerSnapshot | null {
   return multiplayerSnapshot.players[multiplayerRoom.sessionId] ?? null;
 }
 
+function isServerAuthoritativePlaying(): boolean {
+  return Boolean(multiplayerRoom && multiplayerSnapshot?.phase === "playing");
+}
+
 function setRoomNotice(level: "info" | "error", message: string): void {
   roomNoticeLevel = level;
   roomNoticeMessage = message;
@@ -327,58 +340,6 @@ function schedulePressureLoop(): void {
     render();
     schedulePressureLoop();
   }, delay);
-}
-
-function computeLongestWordFromBoard(gameState: GameState): string {
-  const boardLetters = new Map<string, string>();
-  for (const tile of gameState.tiles.filter(isBoardTile)) {
-    boardLetters.set(`${tile.row}:${tile.col}`, tile.letter);
-  }
-
-  let best = "";
-  const updateBest = (candidate: string): void => {
-    if (candidate.length > best.length) {
-      best = candidate;
-    }
-  };
-
-  for (let row = 1; row <= gameState.config.rows; row += 1) {
-    let sequence = "";
-    for (let col = 1; col <= gameState.config.cols; col += 1) {
-      const letter = boardLetters.get(`${row}:${col}`);
-      if (letter) {
-        sequence += letter;
-      } else {
-        if (sequence.length >= 2) {
-          updateBest(sequence);
-        }
-        sequence = "";
-      }
-    }
-    if (sequence.length >= 2) {
-      updateBest(sequence);
-    }
-  }
-
-  for (let col = 1; col <= gameState.config.cols; col += 1) {
-    let sequence = "";
-    for (let row = 1; row <= gameState.config.rows; row += 1) {
-      const letter = boardLetters.get(`${row}:${col}`);
-      if (letter) {
-        sequence += letter;
-      } else {
-        if (sequence.length >= 2) {
-          updateBest(sequence);
-        }
-        sequence = "";
-      }
-    }
-    if (sequence.length >= 2) {
-      updateBest(sequence);
-    }
-  }
-
-  return best;
 }
 
 async function leaveRoomSilently(): Promise<void> {
@@ -418,14 +379,27 @@ function attachRoom(room: Room): void {
 
   room.onMessage("game_started", () => {
     setRoomNotice("info", "Game started.");
-    resetGame(Number(playerCountSelect.value));
     renderMultiplayerPanel();
+  });
+
+  room.onMessage("game_snapshot", (payload: GameSnapshotMessage) => {
+    state = payload.gameState;
+    serverNextPressureAt = Number(payload.nextPressureAt) || 0;
+    if (state.status === "won") {
+      isWinOverlayDismissed = false;
+    }
+    render();
   });
 
   room.onMessage("game_finished", (payload: { winnerName?: string; longestWord?: string }) => {
     const winnerName = payload?.winnerName ?? "Unknown";
     const longestWord = payload?.longestWord ? `, longest word: ${payload.longestWord}` : "";
     setRoomNotice("info", `${winnerName} won${longestWord}.`);
+    renderMultiplayerPanel();
+  });
+
+  room.onMessage("action_rejected", (payload: { message?: string }) => {
+    setRoomNotice("error", payload?.message ?? "Action rejected by server.");
     renderMultiplayerPanel();
   });
 
@@ -437,6 +411,7 @@ function attachRoom(room: Room): void {
   room.onLeave((code) => {
     multiplayerRoom = null;
     multiplayerSnapshot = null;
+    serverNextPressureAt = 0;
     setRoomNotice("error", `Disconnected from room (code ${code}).`);
     renderMultiplayerPanel();
   });
@@ -562,6 +537,13 @@ function renderStatus(): void {
 
   if (state.status !== "running") {
     pressureCountdown.textContent = "Stopped";
+  } else if (isServerAuthoritativePlaying()) {
+    if (serverNextPressureAt > 0) {
+      const seconds = Math.max(0, (serverNextPressureAt - Date.now()) / 1000);
+      pressureCountdown.textContent = `${seconds.toFixed(1)}s`;
+    } else {
+      pressureCountdown.textContent = "Server controlled";
+    }
   } else if (pressureDeadline > 0) {
     const seconds = Math.max(0, (pressureDeadline - Date.now()) / 1000);
     pressureCountdown.textContent = `${seconds.toFixed(1)}s`;
@@ -571,6 +553,8 @@ function renderStatus(): void {
 
   serveButton.disabled = state.status !== "running";
   serveButton.textContent = state.drawPile.length <= state.config.players ? "Serve Final Plate" : "Serve Plate";
+  resetButton.disabled = isServerAuthoritativePlaying();
+  playerCountSelect.disabled = isServerAuthoritativePlaying();
 }
 
 function renderTradeZoneState(isHovering: boolean): void {
@@ -673,7 +657,7 @@ function renderMultiplayerPanel(): void {
 }
 
 function render(): void {
-  if (state.status !== "running") {
+  if (isServerAuthoritativePlaying() || state.status !== "running") {
     clearPressureLoop();
   }
   renderBoardTiles();
@@ -736,7 +720,17 @@ function endDrag(event: PointerEvent): void {
   drag = null;
   stopDraggingVisualState();
 
-  if (dropInTrade) {
+  if (isServerAuthoritativePlaying() && multiplayerRoom) {
+    if (dropInTrade) {
+      multiplayerRoom.send("action_trade_tile", { tileId: draggedTileId });
+    } else if (targetCell) {
+      multiplayerRoom.send("action_move_tile", {
+        tileId: draggedTileId,
+        row: targetCell.row,
+        col: targetCell.col,
+      });
+    }
+  } else if (dropInTrade) {
     state = tradeTile(state, draggedTileId, rng);
   } else if (targetCell) {
     state = moveTile(state, draggedTileId, targetCell.row, targetCell.col);
@@ -787,14 +781,6 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
   event.preventDefault();
 }
 
-function reportWinToRoom(): void {
-  if (!multiplayerRoom || multiplayerSnapshot?.phase !== "playing") {
-    return;
-  }
-  const longestWord = computeLongestWordFromBoard(state);
-  multiplayerRoom.send("finish_game", { longestWord });
-}
-
 function resetGame(players: number): void {
   state = createGame({ players }, rng);
   isWinOverlayDismissed = false;
@@ -832,10 +818,14 @@ playerNameInput.addEventListener("change", () => {
 });
 
 serveButton.addEventListener("click", () => {
+  if (isServerAuthoritativePlaying()) {
+    multiplayerRoom?.send("action_serve_plate");
+    return;
+  }
+
   state = servePlate(state);
   if (state.status === "won") {
     isWinOverlayDismissed = false;
-    reportWinToRoom();
   }
   render();
 });
@@ -850,6 +840,12 @@ overlayCloseButton.addEventListener("click", () => {
 });
 
 overlayResetButton.addEventListener("click", () => {
+  if (isServerAuthoritativePlaying()) {
+    isWinOverlayDismissed = true;
+    setRoomNotice("info", "Host can start the next multiplayer round from the room controls.");
+    render();
+    return;
+  }
   resetGame(Number(playerCountSelect.value));
 });
 
