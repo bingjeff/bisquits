@@ -140,7 +140,15 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       if (!player || this.state.phase !== "lobby") {
         return;
       }
-      player.ready = Boolean(message?.ready);
+      const nextReady = Boolean(message?.ready);
+      if (player.ready === nextReady) {
+        return;
+      }
+      player.ready = nextReady;
+      this.broadcast("room_notice", {
+        level: "info",
+        message: `${player.name} is ${nextReady ? "ready" : "not ready"}.`,
+      });
       this.updateRoomMetadata();
     });
 

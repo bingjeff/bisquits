@@ -121,8 +121,6 @@ app.innerHTML = `
           <p id="net-status" class="metric-subtle">Disconnected</p>
           <label class="field-label" for="player-name-input">Name</label>
           <input id="player-name-input" class="text-input" maxlength="20" autocomplete="nickname" />
-          <label class="field-label" for="room-id-input">Room ID (optional)</label>
-          <input id="room-id-input" class="text-input" maxlength="64" placeholder="Join by room id" />
           <div class="button-row">
             <button id="create-room-btn" class="button">Create</button>
             <button id="join-room-btn" class="button button-muted">Join</button>
@@ -268,7 +266,6 @@ const serveButton = requireElement<HTMLButtonElement>("#serve-btn");
 
 const netStatus = requireElement<HTMLParagraphElement>("#net-status");
 const playerNameInput = requireElement<HTMLInputElement>("#player-name-input");
-const roomIdInput = requireElement<HTMLInputElement>("#room-id-input");
 const createRoomButton = requireElement<HTMLButtonElement>("#create-room-btn");
 const joinRoomButton = requireElement<HTMLButtonElement>("#join-room-btn");
 const refreshRoomsButton = requireElement<HTMLButtonElement>("#refresh-rooms-btn");
@@ -507,7 +504,6 @@ async function leaveRoomSilently(): Promise<void> {
 function attachRoom(room: Room): void {
   multiplayerRoom = room;
   multiplayerSnapshot = getRoomSnapshot(room);
-  roomIdInput.value = room.roomId;
   setRoomNotice("info", `Connected to room ${room.roomId}.`);
 
   room.onStateChange(() => {
@@ -573,8 +569,7 @@ function attachRoom(room: Room): void {
 async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Promise<void> {
   const playerName = sanitizePlayerName(playerNameInput.value);
   playerNameInput.value = playerName;
-  const roomId = (explicitRoomId || roomIdInput.value).trim();
-  roomIdInput.value = roomId;
+  const targetRoomId = explicitRoomId.trim();
 
   createRoomButton.disabled = true;
   joinRoomButton.disabled = true;
@@ -584,8 +579,8 @@ async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Prom
     let joinedRoom: Room;
     if (mode === "create") {
       joinedRoom = await multiplayerClient.create("bisquits", { name: playerName });
-    } else if (roomId) {
-      joinedRoom = await multiplayerClient.joinById(roomId, { name: playerName });
+    } else if (targetRoomId) {
+      joinedRoom = await multiplayerClient.joinById(targetRoomId, { name: playerName });
     } else {
       joinedRoom = await multiplayerClient.joinOrCreate("bisquits", { name: playerName });
     }
@@ -796,8 +791,15 @@ function renderMultiplayerPanel(): void {
       item.className = "player-list-item";
       const isHost = snapshot.ownerClientId === player.clientId;
       const isSelf = currentRoom.sessionId === player.clientId;
-      const readyToken = player.ready ? "ready" : "not ready";
-      const tag = `${isHost ? "host · " : ""}${isSelf ? "you · " : ""}${readyToken}`;
+      const roleTokens: string[] = [];
+      if (isHost) {
+        roleTokens.push("HOST");
+      }
+      if (isSelf) {
+        roleTokens.push("YOU");
+      }
+      roleTokens.push(player.ready ? "READY" : "NOT READY");
+      const tag = roleTokens.join(" · ");
       const longestWord = player.longestWord ? ` · best: ${player.longestWord}` : "";
       item.textContent = `${player.name} (${tag}) · ${player.wins}W/${player.gamesPlayed}G${longestWord}`;
       roomPlayerList.append(item);
@@ -959,11 +961,22 @@ refreshRoomsButton.addEventListener("click", () => {
 });
 
 readyButton.addEventListener("click", () => {
-  if (!multiplayerRoom) {
+  if (!multiplayerRoom || !multiplayerSnapshot || multiplayerSnapshot.phase === "playing") {
     return;
   }
   const localPlayer = getLocalRoomPlayer();
-  multiplayerRoom.send("set_ready", { ready: !localPlayer?.ready });
+  if (!localPlayer) {
+    return;
+  }
+
+  const nextReady = !localPlayer.ready;
+  multiplayerRoom.send("set_ready", { ready: nextReady });
+
+  const localSnapshotPlayer = multiplayerSnapshot.players[multiplayerRoom.sessionId];
+  if (localSnapshotPlayer) {
+    localSnapshotPlayer.ready = nextReady;
+    renderMultiplayerPanel();
+  }
 });
 
 startRoomButton.addEventListener("click", () => {
