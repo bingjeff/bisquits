@@ -6,9 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm dev:mp",
+    "dev:lan": "pnpm dev:mp:lan",
     "dev:client": "vite --config client/vite.config.ts",
+    "dev:client:lan": "vite --config client/vite.config.ts --host 0.0.0.0",
     "dev:server": "tsx watch server/index.ts",
     "dev:mp": "concurrently -n client,server -c yellow,cyan \"pnpm dev:client\" \"pnpm dev:server\"",
+    "dev:mp:lan": "concurrently -n client,server -c yellow,cyan \"pnpm dev:client:lan\" \"pnpm dev:server\"",
     "build": "pnpm typecheck && vite build --config client/vite.config.ts",
     "preview": "vite preview --config client/vite.config.ts",
     "test": "tsx --test tests/**/*.test.ts",

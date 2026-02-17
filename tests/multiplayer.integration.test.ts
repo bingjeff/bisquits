@@ -104,7 +104,7 @@ function startServer(port: number): Promise<StartedServer> {
     });
 
     const interval = setInterval(() => {
-      if (output.includes(`listening on ws://localhost:${port}`)) {
+      if (output.includes("[colyseus] listening on ws://") && output.includes(`:${port}`)) {
         clearInterval(interval);
         clearTimeout(timer);
         resolve({

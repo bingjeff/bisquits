@@ -5,6 +5,7 @@ import { BisquitsRoom } from "./rooms/BisquitsRoom";
 import { statsStore } from "./stats/StatsStore";
 
 const port = Number(process.env.COLYSEUS_PORT ?? 2567);
+const host = process.env.COLYSEUS_HOST ?? "0.0.0.0";
 
 const httpServer = createServer();
 
@@ -18,8 +19,9 @@ gameServer.define("lobby", LobbyRoom);
 gameServer.define("bisquits", BisquitsRoom).enableRealtimeListing();
 
 await statsStore.init();
-await gameServer.listen(port);
-console.log(`[colyseus] listening on ws://localhost:${port}`);
+await gameServer.listen(port, host);
+const hostLabel = host === "0.0.0.0" ? "0.0.0.0 (all interfaces)" : host;
+console.log(`[colyseus] listening on ws://${hostLabel}:${port}`);
 
 let isShuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
