@@ -29,9 +29,14 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "@colyseus/schema": "^4.0.12",
-    "@colyseus/ws-transport": "^0.17.9",
-    "colyseus": "^0.17.8",
+    "@colyseus/auth": "0.16.6",
+    "@colyseus/core": "0.16.24",
+    "@colyseus/redis-driver": "0.16.1",
+    "@colyseus/redis-presence": "0.16.4",
+    "@colyseus/schema": "^3.0.76",
+    "@colyseus/uwebsockets-transport": "0.16.10",
+    "@colyseus/ws-transport": "^0.16.5",
+    "colyseus": "^0.16.5",
     "colyseus.js": "^0.16.22"
   }
 }

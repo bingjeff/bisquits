@@ -95,7 +95,7 @@ function isBoardTile(tile: Tile): tile is Tile & { zone: "board"; row: number; c
   return tile.zone === "board" && tile.row !== null && tile.col !== null;
 }
 
-export class BisquitsRoom extends Room<{ state: BisquitsRoomState }> {
+export class BisquitsRoom extends Room<BisquitsRoomState> {
   maxClients = 4;
 
   private gameState: GameState | null = null;

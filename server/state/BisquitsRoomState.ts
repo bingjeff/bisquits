@@ -3,13 +3,24 @@ import { MapSchema, Schema, defineTypes } from "@colyseus/schema";
 export type RoomPhase = "lobby" | "playing";
 
 export class PlayerState extends Schema {
-  clientId = "";
-  name = "";
-  ready = false;
-  joinedAt = Date.now();
-  wins = 0;
-  gamesPlayed = 0;
-  longestWord = "";
+  declare clientId: string;
+  declare name: string;
+  declare ready: boolean;
+  declare joinedAt: number;
+  declare wins: number;
+  declare gamesPlayed: number;
+  declare longestWord: string;
+
+  constructor() {
+    super();
+    this.clientId = "";
+    this.name = "";
+    this.ready = false;
+    this.joinedAt = Date.now();
+    this.wins = 0;
+    this.gamesPlayed = 0;
+    this.longestWord = "";
+  }
 }
 
 defineTypes(PlayerState, {
@@ -23,13 +34,24 @@ defineTypes(PlayerState, {
 });
 
 export class BisquitsRoomState extends Schema {
-  players = new MapSchema<PlayerState>();
-  phase: RoomPhase = "lobby";
-  ownerClientId = "";
-  lastWinnerName = "";
-  lastLongestWord = "";
-  roundsPlayed = 0;
-  createdAt = Date.now();
+  declare players: MapSchema<PlayerState>;
+  declare phase: RoomPhase;
+  declare ownerClientId: string;
+  declare lastWinnerName: string;
+  declare lastLongestWord: string;
+  declare roundsPlayed: number;
+  declare createdAt: number;
+
+  constructor() {
+    super();
+    this.players = new MapSchema<PlayerState>();
+    this.phase = "lobby";
+    this.ownerClientId = "";
+    this.lastWinnerName = "";
+    this.lastLongestWord = "";
+    this.roundsPlayed = 0;
+    this.createdAt = Date.now();
+  }
 }
 
 defineTypes(BisquitsRoomState, {
