@@ -168,12 +168,14 @@ app.innerHTML = `
           <div id="tile-shelf" class="tile-shelf" aria-label="Tile shelf"></div>
         </div>
 
-        <div id="trade-zone" class="trade-zone" aria-label="Trade zone">
-          Drop a tile here to trade one for three.
-        </div>
-
-        <div id="serve-row" class="button-row button-row-single">
-          <button id="serve-btn" class="button">Serve Plate</button>
+        <div id="action-card" class="hud-card">
+          <p class="label">Actions</p>
+          <div id="trade-zone" class="trade-zone" aria-label="Trade zone">
+            Drop a tile here to trade one for three.
+          </div>
+          <div id="serve-row" class="button-row button-row-single">
+            <button id="serve-btn" class="button">Serve Plate</button>
+          </div>
         </div>
       </aside>
     </section>
@@ -291,7 +293,7 @@ const quitRoomButton = requireElement<HTMLButtonElement>("#quit-room-btn");
 const roomCard = requireElement<HTMLDivElement>("#room-card");
 const bagCard = requireElement<HTMLDivElement>("#bag-card");
 const shelfCard = requireElement<HTMLDivElement>("#shelf-card");
-const serveRow = requireElement<HTMLDivElement>("#serve-row");
+const actionCard = requireElement<HTMLDivElement>("#action-card");
 const roomControlsRow = requireElement<HTMLDivElement>("#room-controls-row");
 const readyButton = requireElement<HTMLButtonElement>("#ready-btn");
 const startRoomButton = requireElement<HTMLButtonElement>("#start-room-btn");
@@ -780,8 +782,7 @@ function renderMultiplayerPanel(): void {
     roomCard.classList.add("panel-hidden");
     bagCard.classList.add("panel-hidden");
     shelfCard.classList.add("panel-hidden");
-    tradeZone.classList.add("panel-hidden");
-    serveRow.classList.add("panel-hidden");
+    actionCard.classList.add("panel-hidden");
     connectView.classList.remove("panel-hidden");
     connectView.setAttribute("aria-hidden", "false");
     sessionView.classList.add("panel-hidden");
@@ -805,8 +806,7 @@ function renderMultiplayerPanel(): void {
     roomCard.classList.remove("panel-hidden");
     bagCard.classList.remove("panel-hidden");
     shelfCard.classList.remove("panel-hidden");
-    tradeZone.classList.remove("panel-hidden");
-    serveRow.classList.remove("panel-hidden");
+    actionCard.classList.toggle("panel-hidden", phase !== "playing");
     connectView.classList.add("panel-hidden");
     connectView.setAttribute("aria-hidden", "true");
     sessionView.classList.remove("panel-hidden");

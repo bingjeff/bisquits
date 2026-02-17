@@ -399,6 +399,20 @@ h1 {
   border-color: rgba(119, 90, 73, 0.45);
 }
 
+#action-card {
+  padding: 0.95rem 1rem 1rem;
+}
+
+#action-card .trade-zone {
+  margin-top: 0.4rem;
+  padding: 1rem;
+  min-height: 92px;
+}
+
+#action-card #serve-row {
+  margin-top: 0.45rem;
+}
+
 .button-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
