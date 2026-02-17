@@ -230,6 +230,7 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     const startedPromise = waitForMessage<{ startedAt: number }>(hostRoom, "game_started", 7000);
     const snapshotPromise = waitForMessage<{
       reason: string;
+      nextPressureAt: number;
       gameState: { status: string; tiles: unknown[] };
     }>(hostRoom, "game_snapshot", 7000);
 
@@ -241,6 +242,7 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     const snapshot = await snapshotPromise;
 
     assert.equal(snapshot.reason, "start_game");
+    assert.equal(snapshot.nextPressureAt, 0);
     assert.equal(snapshot.gameState.status, "running");
     assert.ok(Array.isArray(snapshot.gameState.tiles));
     assert.ok(snapshot.gameState.tiles.length > 0);

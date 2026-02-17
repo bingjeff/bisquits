@@ -59,7 +59,6 @@ interface StatsSnapshot {
 
 interface GameSnapshotMessage {
   gameState: GameState;
-  nextPressureAt: number;
   reason: string;
   actorClientId?: string;
   serverTime: number;
@@ -163,8 +162,6 @@ app.innerHTML = `
         <div class="hud-card">
           <p class="label">Bag Remaining</p>
           <p id="bag-count" class="metric-number"></p>
-          <p class="label">Pressure Tick</p>
-          <p id="pressure-countdown" class="metric-subtle"></p>
         </div>
 
         <div class="hud-card">
@@ -275,7 +272,6 @@ const overlayCloseButton = requireElement<HTMLButtonElement>("#overlay-close-btn
 const statusText = requireElement<HTMLParagraphElement>("#status-text");
 const actionText = requireElement<HTMLParagraphElement>("#action-text");
 const bagCount = requireElement<HTMLParagraphElement>("#bag-count");
-const pressureCountdown = requireElement<HTMLParagraphElement>("#pressure-countdown");
 const tradeZone = requireElement<HTMLDivElement>("#trade-zone");
 const serveButton = requireElement<HTMLButtonElement>("#serve-btn");
 
@@ -319,7 +315,6 @@ let listedRooms: ListedRoom[] = [];
 let isRefreshingRooms = false;
 let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
-let serverNextPressureAt = 0;
 
 function getBoardMetrics(): { width: number; height: number; cellWidth: number; cellHeight: number; tileSize: number } {
   const rect = board.getBoundingClientRect();
@@ -513,7 +508,6 @@ async function leaveRoomSilently(): Promise<void> {
   const roomToLeave = multiplayerRoom;
   multiplayerRoom = null;
   multiplayerSnapshot = null;
-  serverNextPressureAt = 0;
   state = createPlaceholderState();
   try {
     await roomToLeave.leave();
@@ -551,7 +545,6 @@ function attachRoom(room: Room): void {
 
   room.onMessage("game_snapshot", (payload: GameSnapshotMessage) => {
     state = payload.gameState;
-    serverNextPressureAt = Number(payload.nextPressureAt) || 0;
     if (state.status === "won") {
       isWinOverlayDismissed = false;
     } else {
@@ -581,7 +574,6 @@ function attachRoom(room: Room): void {
     multiplayerRoom = null;
     multiplayerSnapshot = null;
     state = createPlaceholderState();
-    serverNextPressureAt = 0;
     setRoomNotice("error", `Disconnected from room (code ${code}).`);
     render();
   });
@@ -701,7 +693,6 @@ function renderStatus(): void {
     statusText.textContent = "Not connected";
     actionText.textContent = "Create or join a room to begin.";
     bagCount.textContent = "--";
-    pressureCountdown.textContent = "Not connected";
     serveButton.disabled = true;
     serveButton.textContent = "Serve Plate";
     return;
@@ -711,7 +702,6 @@ function renderStatus(): void {
     statusText.textContent = "Lobby";
     actionText.textContent = state.lastAction || "Waiting for host to start.";
     bagCount.textContent = "--";
-    pressureCountdown.textContent = "Waiting for host";
     serveButton.disabled = true;
     serveButton.textContent = "Serve Plate";
     return;
@@ -726,15 +716,6 @@ function renderStatus(): void {
   statusText.textContent = statusMap[state.status];
   actionText.textContent = state.lastAction;
   bagCount.textContent = `${state.drawPile.length}`;
-
-  if (state.status !== "running") {
-    pressureCountdown.textContent = "Stopped";
-  } else if (serverNextPressureAt > 0) {
-    const seconds = Math.max(0, (serverNextPressureAt - Date.now()) / 1000);
-    pressureCountdown.textContent = `${seconds.toFixed(1)}s`;
-  } else {
-    pressureCountdown.textContent = "Server controlled";
-  }
 
   serveButton.disabled = state.status !== "running";
   serveButton.textContent = state.drawPile.length <= state.config.players ? "Serve Final Plate" : "Serve Plate";
@@ -1058,12 +1039,6 @@ boardResizeObserver.observe(board);
 window.addEventListener("beforeunload", () => {
   void leaveRoomSilently();
 });
-
-window.setInterval(() => {
-  if (multiplayerSnapshot?.phase === "playing" && state.status === "running") {
-    renderStatus();
-  }
-}, 150);
 
 renderGrid();
 void refreshOpenRooms();

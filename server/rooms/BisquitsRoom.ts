@@ -1,6 +1,5 @@
 import { Client, Room } from "colyseus";
 import {
-  applyPressureTick,
   canTradeTile,
   createGame,
   moveTile,
@@ -122,8 +121,6 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   maxClients = 4;
 
   private gameState: GameState | null = null;
-  private pressureTimeout: NodeJS.Timeout | null = null;
-  private nextPressureAt = 0;
 
   onCreate(): void {
     this.setState(new BisquitsRoomState());
@@ -208,7 +205,6 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
     if (this.state.players.size < 2 && this.state.phase === "playing") {
       this.state.phase = "lobby";
-      this.clearPressureTimer();
       this.broadcast("room_notice", {
         level: "info",
         message: "Game reset to lobby because player count dropped below 2.",
@@ -239,7 +235,6 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
     this.gameState = createGame({ players: Math.min(4, this.clients.length) });
     this.broadcast("game_started", { startedAt: Date.now() });
-    this.schedulePressureTick();
     this.broadcast("game_snapshot", this.buildGameSnapshot("start_game", client.sessionId));
     this.updateRoomMetadata();
   }
@@ -258,7 +253,6 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     this.gameState = moveTile(this.gameState as GameState, tileId, row, col);
-    this.schedulePressureTick();
     this.broadcast("game_snapshot", this.buildGameSnapshot("move_tile", client.sessionId));
   }
 
@@ -280,7 +274,6 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     this.gameState = tradeTile(current, tileId);
-    this.schedulePressureTick();
     this.broadcast("game_snapshot", this.buildGameSnapshot("trade_tile", client.sessionId));
   }
 
@@ -292,57 +285,16 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     const nextState = servePlate(this.gameState as GameState);
     this.gameState = nextState;
     if (nextState.status === "running") {
-      this.schedulePressureTick();
       this.broadcast("game_snapshot", this.buildGameSnapshot("serve_plate", client.sessionId));
       return;
     }
 
-    this.clearPressureTimer();
     this.broadcast("game_snapshot", this.buildGameSnapshot("serve_plate", client.sessionId));
     if (nextState.status === "won") {
       void this.finalizeWinner(client.sessionId);
       return;
     }
     this.finalizeNoWinner("Round ended without a winner.");
-  }
-
-  private runPressureTick(): void {
-    if (this.state.phase !== "playing" || !this.gameState) {
-      this.clearPressureTimer();
-      return;
-    }
-
-    const nextState = applyPressureTick(this.gameState);
-    this.gameState = nextState;
-    if (nextState.status === "running") {
-      this.schedulePressureTick();
-      this.broadcast("game_snapshot", this.buildGameSnapshot("pressure_tick"));
-      return;
-    }
-
-    this.clearPressureTimer();
-    this.broadcast("game_snapshot", this.buildGameSnapshot("pressure_tick"));
-    this.finalizeNoWinner("The bag ran dry before any player could serve.");
-  }
-
-  private schedulePressureTick(): void {
-    this.clearPressureTimer();
-    if (!this.gameState || this.state.phase !== "playing" || this.gameState.status !== "running") {
-      return;
-    }
-
-    const [min, max] = this.gameState.config.pressureRangeMs;
-    const delay = Math.round(min + Math.random() * (max - min));
-    this.nextPressureAt = Date.now() + delay;
-    this.pressureTimeout = setTimeout(() => this.runPressureTick(), delay);
-  }
-
-  private clearPressureTimer(): void {
-    if (this.pressureTimeout) {
-      clearTimeout(this.pressureTimeout);
-      this.pressureTimeout = null;
-    }
-    this.nextPressureAt = 0;
   }
 
   private buildGameSnapshot(reason: string, actorClientId?: string): {
@@ -354,7 +306,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   } {
     return {
       gameState: this.gameState as GameState,
-      nextPressureAt: this.nextPressureAt,
+      nextPressureAt: 0,
       reason,
       actorClientId,
       serverTime: Date.now(),
@@ -472,7 +424,5 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     });
   }
 
-  onDispose(): void {
-    this.clearPressureTimer();
-  }
+  onDispose(): void {}
 }
