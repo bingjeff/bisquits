@@ -168,6 +168,90 @@ function waitForMessage<T>(room: Room, type: string, timeoutMs = 5000): Promise<
   });
 }
 
+function waitForGameSnapshot(
+  room: Room,
+  predicate: (snapshot: {
+    reason: string;
+    actorClientId?: string;
+    nextPressureAt?: number;
+    gameState: { status?: string; tiles: unknown[] };
+  }) => boolean,
+  timeoutMs = 5000,
+): Promise<{
+  reason: string;
+  actorClientId?: string;
+  nextPressureAt?: number;
+  gameState: { status?: string; tiles: unknown[] };
+}> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("Timed out waiting for matching game_snapshot."));
+    }, timeoutMs);
+
+    room.onMessage("game_snapshot", (payload) => {
+      const snapshot = payload as {
+        reason: string;
+        actorClientId?: string;
+        nextPressureAt?: number;
+        gameState: { status?: string; tiles: unknown[] };
+      };
+      if (!predicate(snapshot)) {
+        return;
+      }
+      clearTimeout(timer);
+      resolve(snapshot);
+    });
+  });
+}
+
+function stagingTileCount(snapshot: { gameState: { tiles: unknown[] } }): number {
+  const entries = Array.isArray(snapshot.gameState.tiles) ? snapshot.gameState.tiles : [];
+  return entries.reduce((count, entry) => {
+    if (!entry || typeof entry !== "object") {
+      return count;
+    }
+    const candidate = entry as Record<string, unknown>;
+    return candidate.zone === "staging" ? count + 1 : count;
+  }, 0);
+}
+
+function stagingTileIds(snapshot: { gameState: { tiles: unknown[] } }): string[] {
+  const entries = Array.isArray(snapshot.gameState.tiles) ? snapshot.gameState.tiles : [];
+  const ids: string[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const candidate = entry as Record<string, unknown>;
+    if (candidate.zone === "staging" && typeof candidate.id === "string") {
+      ids.push(candidate.id);
+    }
+  }
+  return ids;
+}
+
+function tilePositionById(
+  snapshot: { gameState: { tiles: unknown[] } },
+  tileId: string,
+): { zone: string; row: number | null; col: number | null } | null {
+  const entries = Array.isArray(snapshot.gameState.tiles) ? snapshot.gameState.tiles : [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const candidate = entry as Record<string, unknown>;
+    if (candidate.id !== tileId) {
+      continue;
+    }
+    return {
+      zone: String(candidate.zone ?? ""),
+      row: typeof candidate.row === "number" ? candidate.row : null,
+      col: typeof candidate.col === "number" ? candidate.col : null,
+    };
+  }
+  return null;
+}
+
 test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, async () => {
   const port = await getRandomPort();
   const server = await startServer(port);
@@ -228,11 +312,16 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     assert.equal(joinedNames.includes("Guest"), true);
 
     const startedPromise = waitForMessage<{ startedAt: number }>(hostRoom, "game_started", 7000);
-    const snapshotPromise = waitForMessage<{
-      reason: string;
-      nextPressureAt: number;
-      gameState: { status: string; tiles: unknown[] };
-    }>(hostRoom, "game_snapshot", 7000);
+    const snapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (snapshot) => snapshot.reason === "start_game" && snapshot.gameState.status === "running",
+      7000,
+    );
+    const guestStartSnapshotPromise = waitForGameSnapshot(
+      guestRoom,
+      (snapshot) => snapshot.reason === "start_game" && snapshot.gameState.status === "running",
+      7000,
+    );
 
     hostRoom.send("set_ready", { ready: true });
     guestRoom.send("set_ready", { ready: true });
@@ -240,12 +329,116 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
 
     await startedPromise;
     const snapshot = await snapshotPromise;
+    const guestStartSnapshot = await guestStartSnapshotPromise;
 
     assert.equal(snapshot.reason, "start_game");
     assert.equal(snapshot.nextPressureAt, 0);
     assert.equal(snapshot.gameState.status, "running");
     assert.ok(Array.isArray(snapshot.gameState.tiles));
     assert.ok(snapshot.gameState.tiles.length > 0);
+    assert.equal(guestStartSnapshot.reason, "start_game");
+    assert.equal(guestStartSnapshot.nextPressureAt, 0);
+
+    const guestSawHostMovePromise = waitForMessage<{
+      reason: string;
+      actorClientId?: string;
+      gameState: { tiles: unknown[] };
+    }>(guestRoom, "game_snapshot", 900)
+      .then((message) => message.reason === "move_tile" && message.actorClientId === hostRoom.sessionId)
+      .catch(() => false);
+
+    const hostMoveSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (message) => message.reason === "move_tile" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+    hostRoom.send("action_move_tile", { tileId: "t1", row: 1, col: 1 });
+    const hostMoveSnapshot = await hostMoveSnapshotPromise;
+    const guestSawHostMove = await guestSawHostMovePromise;
+
+    assert.equal(hostMoveSnapshot.reason, "move_tile");
+    assert.equal(hostMoveSnapshot.actorClientId, hostRoom.sessionId);
+    assert.equal(guestSawHostMove, false);
+    assert.deepEqual(tilePositionById(hostMoveSnapshot, "t1"), {
+      zone: "board",
+      row: 1,
+      col: 1,
+    });
+    assert.deepEqual(tilePositionById(guestStartSnapshot, "t1"), {
+      zone: "staging",
+      row: null,
+      col: null,
+    });
+
+    const hostSawGuestMovePromise = waitForGameSnapshot(
+      hostRoom,
+      () => true,
+      900,
+    )
+      .then((message) => message.reason === "move_tile" && message.actorClientId === guestRoom.sessionId)
+      .catch(() => false);
+
+    const guestMoveSnapshotPromise = waitForGameSnapshot(
+      guestRoom,
+      (message) => message.reason === "move_tile" && message.actorClientId === guestRoom.sessionId,
+      7000,
+    );
+    guestRoom.send("action_move_tile", { tileId: "t1", row: 2, col: 2 });
+    const guestMoveSnapshot = await guestMoveSnapshotPromise;
+    const hostSawGuestMove = await hostSawGuestMovePromise;
+
+    assert.equal(guestMoveSnapshot.reason, "move_tile");
+    assert.equal(guestMoveSnapshot.actorClientId, guestRoom.sessionId);
+    assert.equal(hostSawGuestMove, false);
+    assert.deepEqual(tilePositionById(guestMoveSnapshot, "t1"), {
+      zone: "board",
+      row: 2,
+      col: 2,
+    });
+
+    const rejectedServePromise = waitForMessage<{ message?: string }>(hostRoom, "action_rejected", 5000);
+    hostRoom.send("action_serve_plate");
+    const rejectedServe = await rejectedServePromise;
+    assert.match(String(rejectedServe.message ?? ""), /Place all tray tiles/i);
+
+    let hostStateForServe = hostMoveSnapshot;
+    const idsToPlace = stagingTileIds(hostStateForServe);
+    for (let i = 0; i < idsToPlace.length; i += 1) {
+      const tileId = idsToPlace[i];
+      const row = Math.floor((i + 1) / 12) + 1;
+      const col = ((i + 1) % 12) + 1;
+      const nextHostMovePromise = waitForGameSnapshot(
+        hostRoom,
+        (message) =>
+          message.reason === "move_tile" &&
+          message.actorClientId === hostRoom.sessionId &&
+          tilePositionById(message, tileId)?.zone === "board",
+        7000,
+      );
+      hostRoom.send("action_move_tile", { tileId, row, col });
+      hostStateForServe = await nextHostMovePromise;
+    }
+
+    assert.equal(stagingTileCount(hostStateForServe), 0);
+
+    const guestStagingBeforeServe = stagingTileCount(guestMoveSnapshot);
+    const hostServeSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (message) => message.reason === "serve_plate" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+    const guestServeSnapshotPromise = waitForGameSnapshot(
+      guestRoom,
+      (message) => message.reason === "serve_plate" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+
+    hostRoom.send("action_serve_plate");
+
+    const hostServeSnapshot = await hostServeSnapshotPromise;
+    const guestServeSnapshot = await guestServeSnapshotPromise;
+    assert.equal(stagingTileCount(hostServeSnapshot) > 0, true);
+    assert.equal(stagingTileCount(guestServeSnapshot), guestStagingBeforeServe + 1);
 
     const logs = server.logs();
     assert.equal(logs.includes("ERR_HTTP_HEADERS_SENT"), false, logs);

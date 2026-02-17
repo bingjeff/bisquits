@@ -217,6 +217,10 @@ function isBoardTile(tile: Tile): tile is Tile & { zone: "board"; row: number; c
   return tile.zone === "board" && tile.row !== null && tile.col !== null;
 }
 
+function hasStagingTiles(gameState: GameState): boolean {
+  return gameState.tiles.some((tile) => tile.zone === "staging");
+}
+
 function sanitizePlayerName(name: string): string {
   return (name.trim().replace(/\s+/g, " ").replace(/[^\w -]/g, "").slice(0, 20) || "Player").trim();
 }
@@ -717,7 +721,7 @@ function renderStatus(): void {
   actionText.textContent = state.lastAction;
   bagCount.textContent = `${state.drawPile.length}`;
 
-  serveButton.disabled = state.status !== "running";
+  serveButton.disabled = state.status !== "running" || hasStagingTiles(state);
   serveButton.textContent = state.drawPile.length <= state.config.players ? "Serve Final Plate" : "Serve Plate";
 }
 

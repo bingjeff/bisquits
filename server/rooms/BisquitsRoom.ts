@@ -117,10 +117,15 @@ function isBoardTile(tile: Tile): tile is Tile & { zone: "board"; row: number; c
   return tile.zone === "board" && tile.row !== null && tile.col !== null;
 }
 
+function hasStagingTiles(gameState: GameState): boolean {
+  return gameState.tiles.some((tile) => tile.zone === "staging");
+}
+
 export class BisquitsRoom extends Room<BisquitsRoomState> {
   maxClients = 4;
 
-  private gameState: GameState | null = null;
+  private playerGameStates = new Map<string, GameState>();
+  private activeRoundPlayers = 0;
 
   onCreate(): void {
     this.setState(new BisquitsRoomState());
@@ -187,8 +192,9 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     const stats = await statsStore.getSnapshot();
     client.send("stats_snapshot", stats);
 
-    if (this.state.phase === "playing" && this.gameState) {
-      client.send("game_snapshot", this.buildGameSnapshot("sync"));
+    if (this.state.phase === "playing") {
+      const playerGame = this.getOrCreatePlayerGameState(client.sessionId);
+      client.send("game_snapshot", this.buildGameSnapshot(playerGame, "sync"));
     }
 
     this.updateRoomMetadata();
@@ -198,12 +204,14 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     const leavingPlayer = this.state.players.get(client.sessionId);
     const leavingName = leavingPlayer?.name ?? "Player";
     this.state.players.delete(client.sessionId);
+    this.playerGameStates.delete(client.sessionId);
 
     if (this.state.ownerClientId === client.sessionId) {
       this.state.ownerClientId = this.getFirstPlayerId();
     }
 
     if (this.state.players.size < 2 && this.state.phase === "playing") {
+      this.clearRoundGames();
       this.state.phase = "lobby";
       this.broadcast("room_notice", {
         level: "info",
@@ -233,14 +241,20 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       player.ready = false;
     });
 
-    this.gameState = createGame({ players: Math.min(4, this.clients.length) });
+    this.activeRoundPlayers = Math.min(4, this.clients.length);
+    this.playerGameStates.clear();
+    for (const participant of this.clients) {
+      this.playerGameStates.set(participant.sessionId, createGame({ players: this.activeRoundPlayers }));
+    }
+
     this.broadcast("game_started", { startedAt: Date.now() });
-    this.broadcast("game_snapshot", this.buildGameSnapshot("start_game", client.sessionId));
+    this.sendSnapshotsToAllPlayers("start_game", client.sessionId);
     this.updateRoomMetadata();
   }
 
   private handleMoveTile(client: Client, message: MoveTileMessage): void {
-    if (!this.ensurePlaying(client)) {
+    const current = this.ensurePlaying(client);
+    if (!current) {
       return;
     }
 
@@ -252,12 +266,14 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       return;
     }
 
-    this.gameState = moveTile(this.gameState as GameState, tileId, row, col);
-    this.broadcast("game_snapshot", this.buildGameSnapshot("move_tile", client.sessionId));
+    const next = moveTile(current, tileId, row, col);
+    this.playerGameStates.set(client.sessionId, next);
+    client.send("game_snapshot", this.buildGameSnapshot(next, "move_tile", client.sessionId));
   }
 
   private handleTradeTile(client: Client, message: TradeTileMessage): void {
-    if (!this.ensurePlaying(client)) {
+    const current = this.ensurePlaying(client);
+    if (!current) {
       return;
     }
 
@@ -267,37 +283,50 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       return;
     }
 
-    const current = this.gameState as GameState;
     if (!canTradeTile(current)) {
       this.sendActionRejected(client, "Not enough tiles remain to trade.");
       return;
     }
 
-    this.gameState = tradeTile(current, tileId);
-    this.broadcast("game_snapshot", this.buildGameSnapshot("trade_tile", client.sessionId));
+    const next = tradeTile(current, tileId);
+    this.playerGameStates.set(client.sessionId, next);
+    client.send("game_snapshot", this.buildGameSnapshot(next, "trade_tile", client.sessionId));
   }
 
   private handleServePlate(client: Client): void {
-    if (!this.ensurePlaying(client)) {
+    const current = this.ensurePlaying(client);
+    if (!current) {
       return;
     }
 
-    const nextState = servePlate(this.gameState as GameState);
-    this.gameState = nextState;
-    if (nextState.status === "running") {
-      this.broadcast("game_snapshot", this.buildGameSnapshot("serve_plate", client.sessionId));
+    if (hasStagingTiles(current)) {
+      this.sendActionRejected(client, "Place all tray tiles on your board before serving.");
       return;
     }
 
-    this.broadcast("game_snapshot", this.buildGameSnapshot("serve_plate", client.sessionId));
-    if (nextState.status === "won") {
+    const nextByClientId = new Map<string, GameState>();
+    for (const participant of this.clients) {
+      const participantState = this.getOrCreatePlayerGameState(participant.sessionId);
+      nextByClientId.set(participant.sessionId, servePlate(participantState));
+    }
+
+    this.playerGameStates = nextByClientId;
+    this.sendSnapshotsToAllPlayers("serve_plate", client.sessionId);
+
+    const actorNextState = nextByClientId.get(client.sessionId);
+    if (!actorNextState || actorNextState.status === "running") {
+      return;
+    }
+
+    if (actorNextState.status === "won") {
       void this.finalizeWinner(client.sessionId);
       return;
     }
+
     this.finalizeNoWinner("Round ended without a winner.");
   }
 
-  private buildGameSnapshot(reason: string, actorClientId?: string): {
+  private buildGameSnapshot(gameState: GameState, reason: string, actorClientId?: string): {
     gameState: GameState;
     nextPressureAt: number;
     reason: string;
@@ -305,7 +334,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     serverTime: number;
   } {
     return {
-      gameState: this.gameState as GameState,
+      gameState,
       nextPressureAt: 0,
       reason,
       actorClientId,
@@ -313,8 +342,35 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     };
   }
 
+  private sendSnapshotsToAllPlayers(reason: string, actorClientId?: string): void {
+    for (const participant of this.clients) {
+      const gameState = this.playerGameStates.get(participant.sessionId);
+      if (!gameState) {
+        continue;
+      }
+      participant.send("game_snapshot", this.buildGameSnapshot(gameState, reason, actorClientId));
+    }
+  }
+
+  private getOrCreatePlayerGameState(clientId: string): GameState {
+    const existing = this.playerGameStates.get(clientId);
+    if (existing) {
+      return existing;
+    }
+
+    const players = this.activeRoundPlayers > 0 ? this.activeRoundPlayers : Math.min(4, this.clients.length);
+    const created = createGame({ players });
+    this.playerGameStates.set(clientId, created);
+    return created;
+  }
+
+  private clearRoundGames(): void {
+    this.playerGameStates.clear();
+    this.activeRoundPlayers = 0;
+  }
+
   private async finalizeWinner(winnerClientId: string): Promise<void> {
-    if (!this.gameState || this.state.phase !== "playing") {
+    if (this.state.phase !== "playing") {
       return;
     }
 
@@ -324,7 +380,13 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       return;
     }
 
-    const longestWord = computeLongestWordFromBoard(this.gameState);
+    const winningGameState = this.playerGameStates.get(winnerClientId);
+    if (!winningGameState) {
+      this.finalizeNoWinner("Winner state was unavailable.");
+      return;
+    }
+
+    const longestWord = computeLongestWordFromBoard(winningGameState);
     if (longestWord.length > winner.longestWord.length) {
       winner.longestWord = longestWord;
     }
@@ -340,6 +402,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     this.state.lastLongestWord = longestWord;
     this.state.roundsPlayed += 1;
     this.state.phase = "lobby";
+    this.clearRoundGames();
 
     const snapshot = await statsStore.recordMatch({
       roomId: this.roomId,
@@ -362,6 +425,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
   private finalizeNoWinner(message: string): void {
     this.state.phase = "lobby";
+    this.clearRoundGames();
     this.broadcast("room_notice", {
       level: "info",
       message,
@@ -369,12 +433,19 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     this.updateRoomMetadata();
   }
 
-  private ensurePlaying(client: Client): boolean {
-    if (this.state.phase !== "playing" || !this.gameState) {
+  private ensurePlaying(client: Client): GameState | null {
+    if (this.state.phase !== "playing") {
       this.sendActionRejected(client, "No active game in this room.");
-      return false;
+      return null;
     }
-    return true;
+
+    const gameState = this.playerGameStates.get(client.sessionId);
+    if (!gameState) {
+      this.sendActionRejected(client, "Your board is not active in this round.");
+      return null;
+    }
+
+    return gameState;
   }
 
   private renamePlayer(client: Client, proposedName: unknown): void {
