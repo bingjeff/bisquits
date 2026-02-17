@@ -122,6 +122,26 @@ app.innerHTML = `
       </section>
 
       <aside class="hud-panel">
+        <div id="bag-card" class="hud-card">
+          <p class="label">Bag Remaining</p>
+          <p id="bag-count" class="metric-number"></p>
+        </div>
+
+        <div id="shelf-card" class="hud-card">
+          <p class="label">Tile Shelf</p>
+          <div id="tile-shelf" class="tile-shelf" aria-label="Tile shelf"></div>
+        </div>
+
+        <div id="action-card" class="hud-card">
+          <p class="label">Actions</p>
+          <div id="trade-zone" class="trade-zone" aria-label="Trade zone">
+            Drop stale bisquit here for three fresh ones!
+          </div>
+          <div id="serve-row" class="button-row button-row-single">
+            <button id="serve-btn" class="button">Serve the bisquits!</button>
+          </div>
+        </div>
+
         <div class="hud-card">
           <p class="label">Connection</p>
           <p id="net-status" class="metric-subtle">Disconnected</p>
@@ -163,26 +183,6 @@ app.innerHTML = `
           <p class="label">Status</p>
           <p id="status-text" class="status-text"></p>
           <p id="action-text" class="action-text"></p>
-        </div>
-
-        <div id="bag-card" class="hud-card">
-          <p class="label">Bag Remaining</p>
-          <p id="bag-count" class="metric-number"></p>
-        </div>
-
-        <div id="shelf-card" class="hud-card">
-          <p class="label">Tile Shelf</p>
-          <div id="tile-shelf" class="tile-shelf" aria-label="Tile shelf"></div>
-        </div>
-
-        <div id="action-card" class="hud-card">
-          <p class="label">Actions</p>
-          <div id="trade-zone" class="trade-zone" aria-label="Trade zone">
-            Drop stale bisquit here for three fresh ones!
-          </div>
-          <div id="serve-row" class="button-row button-row-single">
-            <button id="serve-btn" class="button">Serve the bisquits!</button>
-          </div>
         </div>
       </aside>
     </section>
