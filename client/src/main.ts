@@ -65,6 +65,13 @@ interface GameSnapshotMessage {
   serverTime: number;
 }
 
+interface GameFinishedMessage {
+  winnerName?: string;
+  longestWord?: string;
+  winnerClientId?: string;
+  winningBoardTiles?: Tile[];
+}
+
 interface ListedRoomMetadata {
   phase?: string;
   ownerName?: string;
@@ -325,6 +332,7 @@ let isRefreshingRooms = false;
 let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
 let sharedBagCount = 0;
+let winningBoardTiles: Array<Tile & { zone: "board"; row: number; col: number }> = [];
 
 function getBoardMetrics(): { width: number; height: number; cellWidth: number; cellHeight: number; tileSize: number } {
   const rect = board.getBoundingClientRect();
@@ -520,6 +528,8 @@ async function leaveRoomSilently(): Promise<void> {
   multiplayerSnapshot = null;
   state = createPlaceholderState();
   sharedBagCount = 0;
+  winningBoardTiles = [];
+  isWinOverlayDismissed = true;
   try {
     await roomToLeave.leave();
   } catch {
@@ -530,6 +540,8 @@ async function leaveRoomSilently(): Promise<void> {
 function attachRoom(room: Room): void {
   multiplayerRoom = room;
   multiplayerSnapshot = getRoomSnapshot(room);
+  winningBoardTiles = [];
+  isWinOverlayDismissed = true;
   setRoomNotice("info", `Connected to room ${room.roomId}.`);
 
   room.onStateChange(() => {
@@ -549,6 +561,7 @@ function attachRoom(room: Room): void {
   });
 
   room.onMessage("game_started", () => {
+    winningBoardTiles = [];
     isWinOverlayDismissed = true;
     setRoomNotice("info", "Game started.");
     render();
@@ -557,19 +570,18 @@ function attachRoom(room: Room): void {
   room.onMessage("game_snapshot", (payload: GameSnapshotMessage) => {
     state = payload.gameState;
     sharedBagCount = Number.isFinite(payload.bagCount) ? payload.bagCount : state.drawPile.length;
-    if (state.status === "won") {
-      isWinOverlayDismissed = false;
-    } else {
-      isWinOverlayDismissed = true;
-    }
     render();
   });
 
-  room.onMessage("game_finished", (payload: { winnerName?: string; longestWord?: string }) => {
+  room.onMessage("game_finished", (payload: GameFinishedMessage) => {
     const winnerName = payload?.winnerName ?? "Unknown";
     const longestWord = payload?.longestWord ? `, longest word: ${payload.longestWord}` : "";
+    winningBoardTiles = (Array.isArray(payload?.winningBoardTiles) ? payload.winningBoardTiles : []).filter(
+      isBoardTile,
+    );
+    isWinOverlayDismissed = false;
     setRoomNotice("info", `${winnerName} won${longestWord}.`);
-    renderMultiplayerPanel();
+    render();
   });
 
   room.onMessage("action_rejected", (payload: { message?: string }) => {
@@ -587,6 +599,8 @@ function attachRoom(room: Room): void {
     multiplayerSnapshot = null;
     state = createPlaceholderState();
     sharedBagCount = 0;
+    winningBoardTiles = [];
+    isWinOverlayDismissed = true;
     setRoomNotice("error", `Disconnected from room (code ${code}).`);
     render();
   });
@@ -741,7 +755,7 @@ function renderTradeZoneState(isHovering: boolean): void {
 function renderWinningTable(): void {
   winningTable.innerHTML = "";
   const boardTilesByCell = new Map<string, Tile & { zone: "board"; row: number; col: number }>();
-  for (const tile of state.tiles.filter(isBoardTile)) {
+  for (const tile of winningBoardTiles) {
     boardTilesByCell.set(`${tile.row}:${tile.col}`, tile);
   }
 
@@ -767,7 +781,7 @@ function renderWinningTable(): void {
 }
 
 function renderWinOverlay(): void {
-  const showOverlay = state.status === "won" && !isWinOverlayDismissed;
+  const showOverlay = winningBoardTiles.length > 0 && !isWinOverlayDismissed;
   winOverlay.classList.toggle("overlay-visible", showOverlay);
   winOverlay.setAttribute("aria-hidden", String(!showOverlay));
   document.body.classList.toggle("overlay-open", showOverlay);

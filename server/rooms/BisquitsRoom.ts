@@ -431,6 +431,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       return;
     }
 
+    const winningBoardTiles = winningGameState.tiles.filter(isBoardTile).map((tile) => ({ ...tile }));
     const longestWord = computeLongestWordFromBoard(winningGameState);
     if (longestWord.length > winner.longestWord.length) {
       winner.longestWord = longestWord;
@@ -447,7 +448,6 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     this.state.lastLongestWord = longestWord;
     this.state.roundsPlayed += 1;
     this.state.phase = "lobby";
-    this.clearRoundGames();
 
     const snapshot = await statsStore.recordMatch({
       roomId: this.roomId,
@@ -460,11 +460,14 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     this.broadcast("game_finished", {
       winnerName: winner.name,
       longestWord,
+      winnerClientId,
+      winningBoardTiles,
     });
     this.broadcast("room_notice", {
       level: "info",
       message: `${winner.name} won the round${longestWord ? ` with longest word ${longestWord}` : ""}.`,
     });
+    this.clearRoundGames();
     this.updateRoomMetadata();
   }
 
