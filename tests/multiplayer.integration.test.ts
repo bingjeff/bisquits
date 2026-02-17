@@ -175,19 +175,40 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
   const endpoint = `ws://localhost:${port}`;
   const hostClient = new ColyseusClient(endpoint);
   const guestClient = new ColyseusClient(endpoint);
+  const lobbyClient = new ColyseusClient(endpoint);
 
   let hostRoom: Room | null = null;
   let guestRoom: Room | null = null;
+  let lobbyRoom: Room | null = null;
 
   try {
     hostRoom = await hostClient.create("bisquits", { name: "Host" });
     guestRoom = await guestClient.joinById(hostRoom.roomId, { name: "Guest" });
+    lobbyRoom = await lobbyClient.joinOrCreate("lobby");
+
     hostRoom.onMessage("*", () => {
       // Ignore unrelated room messages in this test.
     });
     guestRoom.onMessage("*", () => {
       // Ignore unrelated room messages in this test.
     });
+    lobbyRoom.onMessage("*", () => {
+      // Ignore unrelated room messages in this test.
+    });
+
+    const listedRoomsPromise = waitForMessage<unknown[]>(lobbyRoom, "rooms", 7000);
+    lobbyRoom.send("filter", { name: "bisquits" });
+    const listedRooms = await listedRoomsPromise;
+    const roomIds = (Array.isArray(listedRooms) ? listedRooms : [])
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return "";
+        }
+        const candidate = entry as Record<string, unknown>;
+        return typeof candidate.roomId === "string" ? candidate.roomId : "";
+      })
+      .filter((roomId) => roomId.length > 0);
+    assert.equal(roomIds.includes(hostRoom.roomId), true);
 
     await waitForRoomState(
       hostRoom,
@@ -197,6 +218,14 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
       },
       7000,
     );
+
+    const stateAfterJoin = roomStateToJson(hostRoom);
+    const playersAfterJoin = Object.values((stateAfterJoin.players as Record<string, unknown>) ?? {}) as Array<
+      Record<string, unknown>
+    >;
+    const joinedNames = playersAfterJoin.map((player) => String(player.name ?? ""));
+    assert.equal(joinedNames.includes("Host"), true);
+    assert.equal(joinedNames.includes("Guest"), true);
 
     const startedPromise = waitForMessage<{ startedAt: number }>(hostRoom, "game_started", 7000);
     const snapshotPromise = waitForMessage<{
@@ -227,6 +256,12 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
 
     if (guestRoom) {
       await guestRoom.leave().catch(() => {
+        // Ignore teardown race conditions.
+      });
+    }
+
+    if (lobbyRoom) {
+      await lobbyRoom.leave().catch(() => {
         // Ignore teardown race conditions.
       });
     }

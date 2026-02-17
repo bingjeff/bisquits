@@ -65,6 +65,22 @@ interface GameSnapshotMessage {
   serverTime: number;
 }
 
+interface ListedRoomMetadata {
+  phase?: string;
+  ownerName?: string;
+  playerCount?: number;
+  maxPlayers?: number;
+  hasActiveGame?: boolean;
+}
+
+interface ListedRoom {
+  roomId: string;
+  name: string;
+  clients: number;
+  maxClients: number;
+  metadata: ListedRoomMetadata;
+}
+
 function createPlaceholderState(): GameState {
   return {
     config: { ...DEFAULT_CONFIG },
@@ -111,6 +127,10 @@ app.innerHTML = `
             <button id="create-room-btn" class="button">Create</button>
             <button id="join-room-btn" class="button button-muted">Join</button>
           </div>
+          <div class="button-row button-row-single">
+            <button id="refresh-rooms-btn" class="button button-muted">Refresh Open Rooms</button>
+          </div>
+          <ul id="available-room-list" class="room-list"></ul>
           <div class="button-row">
             <button id="ready-btn" class="button button-muted">Ready</button>
             <button id="start-room-btn" class="button button-muted">Start</button>
@@ -199,6 +219,38 @@ function getRoomSnapshot(room: Room): MultiplayerRoomSnapshot | null {
   return state.toJSON() as MultiplayerRoomSnapshot;
 }
 
+function normalizeListedRoom(value: unknown): ListedRoom | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const roomId = typeof source.roomId === "string" ? source.roomId : "";
+  const name = typeof source.name === "string" ? source.name : "";
+  if (!roomId || !name) {
+    return null;
+  }
+
+  const clients = Number(source.clients);
+  const maxClients = Number(source.maxClients);
+  const metadataSource =
+    source.metadata && typeof source.metadata === "object" ? (source.metadata as Record<string, unknown>) : {};
+
+  return {
+    roomId,
+    name,
+    clients: Number.isFinite(clients) ? clients : 0,
+    maxClients: Number.isFinite(maxClients) ? maxClients : 0,
+    metadata: {
+      phase: typeof metadataSource.phase === "string" ? metadataSource.phase : undefined,
+      ownerName: typeof metadataSource.ownerName === "string" ? metadataSource.ownerName : undefined,
+      playerCount: Number.isFinite(Number(metadataSource.playerCount)) ? Number(metadataSource.playerCount) : undefined,
+      maxPlayers: Number.isFinite(Number(metadataSource.maxPlayers)) ? Number(metadataSource.maxPlayers) : undefined,
+      hasActiveGame: Boolean(metadataSource.hasActiveGame),
+    },
+  };
+}
+
 const board = requireElement<HTMLDivElement>("#board");
 const boardCells = requireElement<HTMLDivElement>("#board-cells");
 const boardTiles = requireElement<HTMLDivElement>("#board-tiles");
@@ -219,6 +271,8 @@ const playerNameInput = requireElement<HTMLInputElement>("#player-name-input");
 const roomIdInput = requireElement<HTMLInputElement>("#room-id-input");
 const createRoomButton = requireElement<HTMLButtonElement>("#create-room-btn");
 const joinRoomButton = requireElement<HTMLButtonElement>("#join-room-btn");
+const refreshRoomsButton = requireElement<HTMLButtonElement>("#refresh-rooms-btn");
+const availableRoomList = requireElement<HTMLUListElement>("#available-room-list");
 const readyButton = requireElement<HTMLButtonElement>("#ready-btn");
 const startRoomButton = requireElement<HTMLButtonElement>("#start-room-btn");
 const roomDetails = requireElement<HTMLParagraphElement>("#room-details");
@@ -241,6 +295,10 @@ let isWinOverlayDismissed = true;
 let multiplayerRoom: Room | null = null;
 let multiplayerSnapshot: MultiplayerRoomSnapshot | null = null;
 let multiplayerStats: StatsSnapshot | null = null;
+let lobbyRoom: Room | null = null;
+let connectingLobby: Promise<void> | null = null;
+let listedRooms: ListedRoom[] = [];
+let isRefreshingRooms = false;
 let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
 let serverNextPressureAt = 0;
@@ -298,6 +356,136 @@ function isServerAuthoritativePlaying(): boolean {
 function setRoomNotice(level: "info" | "error", message: string): void {
   roomNoticeLevel = level;
   roomNoticeMessage = message;
+}
+
+function sortListedRooms(rooms: ListedRoom[]): ListedRoom[] {
+  return [...rooms].sort((a, b) => {
+    const aCount = a.metadata.playerCount ?? a.clients;
+    const bCount = b.metadata.playerCount ?? b.clients;
+    if (aCount !== bCount) {
+      return bCount - aCount;
+    }
+    return a.roomId.localeCompare(b.roomId);
+  });
+}
+
+function upsertListedRoom(room: ListedRoom): void {
+  const index = listedRooms.findIndex((entry) => entry.roomId === room.roomId);
+  if (index >= 0) {
+    listedRooms[index] = room;
+  } else {
+    listedRooms.push(room);
+  }
+  listedRooms = sortListedRooms(listedRooms);
+}
+
+function removeListedRoom(roomId: string): void {
+  listedRooms = listedRooms.filter((entry) => entry.roomId !== roomId);
+}
+
+function renderAvailableRooms(): void {
+  availableRoomList.innerHTML = "";
+  const visibleRooms = listedRooms.filter((room) => room.name === "bisquits");
+
+  if (visibleRooms.length === 0) {
+    const item = document.createElement("li");
+    item.className = "room-list-empty";
+    item.textContent = isRefreshingRooms ? "Refreshing open rooms..." : "No open rooms right now.";
+    availableRoomList.append(item);
+    return;
+  }
+
+  for (const room of visibleRooms) {
+    const item = document.createElement("li");
+    item.className = "room-list-item";
+
+    const header = document.createElement("div");
+    header.className = "room-list-heading";
+    const phase = room.metadata.phase ?? (room.metadata.hasActiveGame ? "playing" : "lobby");
+    const count = room.metadata.playerCount ?? room.clients;
+    const cap = room.metadata.maxPlayers ?? room.maxClients;
+    header.textContent = `${room.roomId} · ${phase} · ${count}/${cap}`;
+
+    const detail = document.createElement("div");
+    detail.className = "room-list-meta";
+    const ownerName = room.metadata.ownerName ? `Host: ${room.metadata.ownerName}` : "Host unknown";
+    detail.textContent = ownerName;
+
+    const joinButton = document.createElement("button");
+    joinButton.type = "button";
+    joinButton.className = "button button-muted room-join-btn";
+    joinButton.textContent = "Join";
+    joinButton.disabled = multiplayerRoom?.roomId === room.roomId;
+    joinButton.addEventListener("click", () => {
+      void connectToRoom("join", room.roomId);
+    });
+
+    item.append(header, detail, joinButton);
+    availableRoomList.append(item);
+  }
+}
+
+async function ensureLobbyConnection(): Promise<void> {
+  if (lobbyRoom) {
+    return;
+  }
+  if (connectingLobby) {
+    await connectingLobby;
+    return;
+  }
+
+  connectingLobby = (async () => {
+    try {
+      const room = await multiplayerClient.joinOrCreate("lobby");
+      lobbyRoom = room;
+
+      room.onMessage("rooms", (payload: unknown) => {
+        const next = Array.isArray(payload) ? payload.map(normalizeListedRoom).filter(Boolean) as ListedRoom[] : [];
+        listedRooms = sortListedRooms(next);
+        isRefreshingRooms = false;
+        renderAvailableRooms();
+      });
+
+      room.onMessage("+", (payload: unknown) => {
+        if (Array.isArray(payload) && payload.length >= 2) {
+          const normalized = normalizeListedRoom(payload[1]);
+          if (normalized) {
+            upsertListedRoom(normalized);
+            renderAvailableRooms();
+          }
+        }
+      });
+
+      room.onMessage("-", (payload: unknown) => {
+        const roomId = typeof payload === "string" ? payload : "";
+        if (roomId) {
+          removeListedRoom(roomId);
+          renderAvailableRooms();
+        }
+      });
+
+      room.onLeave(() => {
+        lobbyRoom = null;
+      });
+
+      room.send("filter", { name: "bisquits" });
+    } catch {
+      // Keep multiplayer flow working even if lobby feed isn't available.
+    } finally {
+      connectingLobby = null;
+      isRefreshingRooms = false;
+      renderAvailableRooms();
+    }
+  })();
+
+  await connectingLobby;
+}
+
+async function refreshOpenRooms(): Promise<void> {
+  isRefreshingRooms = true;
+  renderAvailableRooms();
+  await ensureLobbyConnection();
+  lobbyRoom?.send("filter", { name: "bisquits" });
 }
 
 async function leaveRoomSilently(): Promise<void> {
@@ -382,10 +570,11 @@ function attachRoom(room: Room): void {
   });
 }
 
-async function connectToRoom(mode: "create" | "join"): Promise<void> {
+async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Promise<void> {
   const playerName = sanitizePlayerName(playerNameInput.value);
   playerNameInput.value = playerName;
-  const roomId = roomIdInput.value.trim();
+  const roomId = (explicitRoomId || roomIdInput.value).trim();
+  roomIdInput.value = roomId;
 
   createRoomButton.disabled = true;
   joinRoomButton.disabled = true;
@@ -401,6 +590,8 @@ async function connectToRoom(mode: "create" | "join"): Promise<void> {
       joinedRoom = await multiplayerClient.joinOrCreate("bisquits", { name: playerName });
     }
     attachRoom(joinedRoom);
+    joinedRoom.send("set_name", { name: playerName });
+    await refreshOpenRooms();
     render();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to join room.";
@@ -581,6 +772,8 @@ function renderWinOverlay(): void {
 function renderMultiplayerPanel(): void {
   const currentRoom = multiplayerRoom;
   const snapshot = multiplayerSnapshot;
+  refreshRoomsButton.disabled = isRefreshingRooms || connectingLobby !== null;
+
   if (!currentRoom || !snapshot) {
     netStatus.textContent = `Disconnected (${colyseusEndpoint})`;
     roomDetails.textContent = "";
@@ -631,6 +824,8 @@ function renderMultiplayerPanel(): void {
   } else {
     statsSummary.textContent = "No completed multiplayer games recorded yet.";
   }
+
+  renderAvailableRooms();
 }
 
 function render(): void {
@@ -759,6 +954,10 @@ joinRoomButton.addEventListener("click", () => {
   void connectToRoom("join");
 });
 
+refreshRoomsButton.addEventListener("click", () => {
+  void refreshOpenRooms();
+});
+
 readyButton.addEventListener("click", () => {
   if (!multiplayerRoom) {
     return;
@@ -811,4 +1010,5 @@ window.setInterval(() => {
 }, 150);
 
 renderGrid();
+void refreshOpenRooms();
 render();

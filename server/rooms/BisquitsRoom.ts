@@ -39,6 +39,29 @@ function sanitizeName(input: unknown, fallback: string): string {
   return (cleaned.slice(0, 20) || fallback).trim();
 }
 
+function getJoinName(options: unknown): unknown {
+  if (!options || typeof options !== "object") {
+    return options;
+  }
+
+  const source = options as Record<string, unknown>;
+  if (typeof source.name === "string") {
+    return source.name;
+  }
+  if (typeof source.playerName === "string") {
+    return source.playerName;
+  }
+  if (
+    source.options &&
+    typeof source.options === "object" &&
+    typeof (source.options as Record<string, unknown>).name === "string"
+  ) {
+    return (source.options as Record<string, unknown>).name;
+  }
+
+  return options;
+}
+
 function computeLongestWordFromBoard(gameState: GameState): string {
   const boardLetters = new Map<string, string>();
   for (const tile of gameState.tiles.filter(isBoardTile)) {
@@ -143,7 +166,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   async onJoin(client: Client, options: PlayerNameMessage): Promise<void> {
     const player = new PlayerState();
     player.clientId = client.sessionId;
-    player.name = sanitizeName(options?.name, `Player ${this.clients.length}`);
+    player.name = sanitizeName(getJoinName(options), `Player ${this.clients.length}`);
 
     this.state.players.set(client.sessionId, player);
     if (!this.state.ownerClientId) {

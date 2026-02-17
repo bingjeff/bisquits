@@ -285,6 +285,47 @@ h1 {
   font-size: 0.82rem;
 }
 
+.room-list {
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.room-list-item {
+  border: 1px solid rgba(88, 68, 39, 0.2);
+  border-radius: 10px;
+  background: rgba(249, 242, 229, 0.82);
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.room-list-heading {
+  font-size: 0.75rem;
+  color: var(--ink);
+  line-height: 1.25;
+  word-break: break-all;
+}
+
+.room-list-meta {
+  font-size: 0.74rem;
+  color: var(--ink-soft);
+}
+
+.room-list-empty {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.room-join-btn {
+  width: 100%;
+  padding: 0.42rem 0.55rem;
+  font-size: 0.82rem;
+}
+
 .room-notice {
   margin: 0.55rem 0 0;
   min-height: 1.2em;
