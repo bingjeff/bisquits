@@ -6,16 +6,7 @@ import { statsStore } from "./stats/StatsStore";
 
 const port = Number(process.env.COLYSEUS_PORT ?? 2567);
 
-const httpServer = createServer((req, res) => {
-  if (req.url === "/healthz") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
-    return;
-  }
-
-  res.writeHead(404, { "content-type": "application/json" });
-  res.end(JSON.stringify({ error: "Not found" }));
-});
+const httpServer = createServer();
 
 const gameServer = new Server({
   transport: new WebSocketTransport({

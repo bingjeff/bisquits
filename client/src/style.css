@@ -85,20 +85,6 @@ h1 {
   line-height: 1.12;
 }
 
-.header-controls {
-  display: grid;
-  gap: 0.35rem;
-  min-width: 152px;
-}
-
-.header-controls label {
-  font-size: 0.73rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-soft);
-}
-
-.select,
 .button,
 .text-input {
   appearance: none;
@@ -108,18 +94,6 @@ h1 {
   font: inherit;
   color: var(--ink);
   background: rgba(255, 250, 239, 0.95);
-}
-
-.select {
-  background-image:
-    linear-gradient(45deg, transparent 50%, #7e6540 50%),
-    linear-gradient(135deg, #7e6540 50%, transparent 50%);
-  background-position:
-    calc(100% - 17px) calc(50% - 2px),
-    calc(100% - 11px) calc(50% - 2px);
-  background-size: 6px 6px, 6px 6px;
-  background-repeat: no-repeat;
-  padding-right: 2.3rem;
 }
 
 .layout {
@@ -371,6 +345,10 @@ h1 {
   gap: 0.55rem;
 }
 
+.button-row-single {
+  grid-template-columns: 1fr;
+}
+
 .button {
   cursor: pointer;
   font-weight: 600;
@@ -498,10 +476,5 @@ h1 {
   .header {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .header-controls {
-    width: 100%;
-    max-width: 280px;
   }
 }

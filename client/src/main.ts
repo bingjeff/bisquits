@@ -1,15 +1,6 @@
 import { Client as ColyseusClient, type Room } from "colyseus.js";
 import "./style.css";
-import {
-  applyPressureTick,
-  canTradeTile,
-  createGame,
-  moveTile,
-  servePlate,
-  tradeTile,
-  type GameState,
-  type Tile,
-} from "./game/engine";
+import { canTradeTile, DEFAULT_CONFIG, type GameState, type Tile } from "../../shared/game/engine";
 
 interface DragState {
   tileId: string;
@@ -74,8 +65,19 @@ interface GameSnapshotMessage {
   serverTime: number;
 }
 
-const app = document.querySelector<HTMLDivElement>("#app");
+function createPlaceholderState(): GameState {
+  return {
+    config: { ...DEFAULT_CONFIG },
+    status: "running",
+    turn: 0,
+    nextTileId: 1,
+    drawPile: [],
+    tiles: [],
+    lastAction: "Join or create a room to begin.",
+  };
+}
 
+const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app root element.");
 }
@@ -85,15 +87,7 @@ app.innerHTML = `
     <header class="header">
       <div>
         <p class="eyebrow">Bisquits Prototype</p>
-        <h1>Single-Client Table</h1>
-      </div>
-      <div class="header-controls">
-        <label for="player-count">Table Size</label>
-        <select id="player-count" class="select">
-          <option value="2">2 players</option>
-          <option value="3">3 players</option>
-          <option value="4" selected>4 players</option>
-        </select>
+        <h1>Multiplayer Table</h1>
       </div>
     </header>
 
@@ -149,9 +143,8 @@ app.innerHTML = `
           Drop a tile here to trade one for three.
         </div>
 
-        <div class="button-row">
+        <div class="button-row button-row-single">
           <button id="serve-btn" class="button">Serve Plate</button>
-          <button id="reset-btn" class="button button-muted">Reset</button>
         </div>
       </aside>
     </section>
@@ -162,9 +155,8 @@ app.innerHTML = `
       <h2 class="overlay-title">Winning Plate</h2>
       <p class="overlay-subtitle">Final board layout for table review.</p>
       <div id="winning-table" class="winning-table" aria-label="Winning table"></div>
-      <div class="button-row overlay-actions">
-        <button id="overlay-reset-btn" class="button">New Round</button>
-        <button id="overlay-close-btn" class="button button-muted">Close</button>
+      <div class="button-row overlay-actions button-row-single">
+        <button id="overlay-close-btn" class="button">Close</button>
       </div>
     </div>
   </div>
@@ -213,17 +205,14 @@ const boardTiles = requireElement<HTMLDivElement>("#board-tiles");
 const tileShelf = requireElement<HTMLDivElement>("#tile-shelf");
 const winOverlay = requireElement<HTMLDivElement>("#win-overlay");
 const winningTable = requireElement<HTMLDivElement>("#winning-table");
-const overlayResetButton = requireElement<HTMLButtonElement>("#overlay-reset-btn");
 const overlayCloseButton = requireElement<HTMLButtonElement>("#overlay-close-btn");
 
-const playerCountSelect = requireElement<HTMLSelectElement>("#player-count");
 const statusText = requireElement<HTMLParagraphElement>("#status-text");
 const actionText = requireElement<HTMLParagraphElement>("#action-text");
 const bagCount = requireElement<HTMLParagraphElement>("#bag-count");
 const pressureCountdown = requireElement<HTMLParagraphElement>("#pressure-countdown");
 const tradeZone = requireElement<HTMLDivElement>("#trade-zone");
 const serveButton = requireElement<HTMLButtonElement>("#serve-btn");
-const resetButton = requireElement<HTMLButtonElement>("#reset-btn");
 
 const netStatus = requireElement<HTMLParagraphElement>("#net-status");
 const playerNameInput = requireElement<HTMLInputElement>("#player-name-input");
@@ -237,7 +226,6 @@ const roomPlayerList = requireElement<HTMLUListElement>("#room-player-list");
 const roomNotice = requireElement<HTMLParagraphElement>("#room-notice");
 const statsSummary = requireElement<HTMLParagraphElement>("#stats-summary");
 
-const rng = Math.random;
 const localNameSeed = Math.floor(100 + Math.random() * 900);
 playerNameInput.value = `Player ${localNameSeed}`;
 
@@ -246,11 +234,9 @@ const defaultColyseusEndpoint = `${wsProtocol}://${window.location.hostname}:256
 const colyseusEndpoint = import.meta.env.VITE_COLYSEUS_URL || defaultColyseusEndpoint;
 const multiplayerClient = new ColyseusClient(colyseusEndpoint);
 
-let state: GameState = createGame({ players: Number(playerCountSelect.value) }, rng);
+let state: GameState = createPlaceholderState();
 let drag: DragState | null = null;
-let pressureTimer: number | null = null;
-let pressureDeadline = 0;
-let isWinOverlayDismissed = false;
+let isWinOverlayDismissed = true;
 
 let multiplayerRoom: Room | null = null;
 let multiplayerSnapshot: MultiplayerRoomSnapshot | null = null;
@@ -258,11 +244,6 @@ let multiplayerStats: StatsSnapshot | null = null;
 let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
 let serverNextPressureAt = 0;
-
-function randomInRange([min, max]: [number, number]): number {
-  const span = max - min;
-  return Math.round(min + rng() * span);
-}
 
 function getBoardMetrics(): { width: number; height: number; cellWidth: number; cellHeight: number; tileSize: number } {
   const rect = board.getBoundingClientRect();
@@ -319,29 +300,6 @@ function setRoomNotice(level: "info" | "error", message: string): void {
   roomNoticeMessage = message;
 }
 
-function clearPressureLoop(): void {
-  if (pressureTimer !== null) {
-    window.clearTimeout(pressureTimer);
-    pressureTimer = null;
-  }
-  pressureDeadline = 0;
-}
-
-function schedulePressureLoop(): void {
-  clearPressureLoop();
-  if (state.status !== "running") {
-    return;
-  }
-
-  const delay = randomInRange(state.config.pressureRangeMs);
-  pressureDeadline = Date.now() + delay;
-  pressureTimer = window.setTimeout(() => {
-    state = applyPressureTick(state);
-    render();
-    schedulePressureLoop();
-  }, delay);
-}
-
 async function leaveRoomSilently(): Promise<void> {
   if (!multiplayerRoom) {
     return;
@@ -349,6 +307,8 @@ async function leaveRoomSilently(): Promise<void> {
   const roomToLeave = multiplayerRoom;
   multiplayerRoom = null;
   multiplayerSnapshot = null;
+  serverNextPressureAt = 0;
+  state = createPlaceholderState();
   try {
     await roomToLeave.leave();
   } catch {
@@ -365,6 +325,7 @@ function attachRoom(room: Room): void {
   room.onStateChange(() => {
     multiplayerSnapshot = getRoomSnapshot(room);
     renderMultiplayerPanel();
+    renderStatus();
   });
 
   room.onMessage("room_notice", (payload: RoomNoticeMessage) => {
@@ -378,8 +339,9 @@ function attachRoom(room: Room): void {
   });
 
   room.onMessage("game_started", () => {
+    isWinOverlayDismissed = true;
     setRoomNotice("info", "Game started.");
-    renderMultiplayerPanel();
+    render();
   });
 
   room.onMessage("game_snapshot", (payload: GameSnapshotMessage) => {
@@ -387,6 +349,8 @@ function attachRoom(room: Room): void {
     serverNextPressureAt = Number(payload.nextPressureAt) || 0;
     if (state.status === "won") {
       isWinOverlayDismissed = false;
+    } else {
+      isWinOverlayDismissed = true;
     }
     render();
   });
@@ -411,9 +375,10 @@ function attachRoom(room: Room): void {
   room.onLeave((code) => {
     multiplayerRoom = null;
     multiplayerSnapshot = null;
+    state = createPlaceholderState();
     serverNextPressureAt = 0;
     setRoomNotice("error", `Disconnected from room (code ${code}).`);
-    renderMultiplayerPanel();
+    render();
   });
 }
 
@@ -436,7 +401,7 @@ async function connectToRoom(mode: "create" | "join"): Promise<void> {
       joinedRoom = await multiplayerClient.joinOrCreate("bisquits", { name: playerName });
     }
     attachRoom(joinedRoom);
-    renderMultiplayerPanel();
+    render();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to join room.";
     setRoomNotice("error", message);
@@ -505,7 +470,7 @@ function renderShelfTiles(): void {
   if (shelfTiles.length === 0) {
     const message = document.createElement("p");
     message.className = "tile-shelf-empty";
-    message.textContent = "Shelf is empty.";
+    message.textContent = isServerAuthoritativePlaying() ? "Shelf is empty." : "No active round.";
     tileShelf.append(message);
     return;
   }
@@ -525,6 +490,26 @@ function renderShelfTiles(): void {
 }
 
 function renderStatus(): void {
+  if (!multiplayerRoom || !multiplayerSnapshot) {
+    statusText.textContent = "Not connected";
+    actionText.textContent = "Create or join a room to begin.";
+    bagCount.textContent = "--";
+    pressureCountdown.textContent = "Not connected";
+    serveButton.disabled = true;
+    serveButton.textContent = "Serve Plate";
+    return;
+  }
+
+  if (multiplayerSnapshot.phase !== "playing") {
+    statusText.textContent = "Lobby";
+    actionText.textContent = state.lastAction || "Waiting for host to start.";
+    bagCount.textContent = "--";
+    pressureCountdown.textContent = "Waiting for host";
+    serveButton.disabled = true;
+    serveButton.textContent = "Serve Plate";
+    return;
+  }
+
   const statusMap: Record<GameState["status"], string> = {
     running: "Game running",
     won: "You won",
@@ -537,29 +522,21 @@ function renderStatus(): void {
 
   if (state.status !== "running") {
     pressureCountdown.textContent = "Stopped";
-  } else if (isServerAuthoritativePlaying()) {
-    if (serverNextPressureAt > 0) {
-      const seconds = Math.max(0, (serverNextPressureAt - Date.now()) / 1000);
-      pressureCountdown.textContent = `${seconds.toFixed(1)}s`;
-    } else {
-      pressureCountdown.textContent = "Server controlled";
-    }
-  } else if (pressureDeadline > 0) {
-    const seconds = Math.max(0, (pressureDeadline - Date.now()) / 1000);
+  } else if (serverNextPressureAt > 0) {
+    const seconds = Math.max(0, (serverNextPressureAt - Date.now()) / 1000);
     pressureCountdown.textContent = `${seconds.toFixed(1)}s`;
   } else {
-    pressureCountdown.textContent = "Scheduling...";
+    pressureCountdown.textContent = "Server controlled";
   }
 
   serveButton.disabled = state.status !== "running";
   serveButton.textContent = state.drawPile.length <= state.config.players ? "Serve Final Plate" : "Serve Plate";
-  resetButton.disabled = isServerAuthoritativePlaying();
-  playerCountSelect.disabled = isServerAuthoritativePlaying();
 }
 
 function renderTradeZoneState(isHovering: boolean): void {
-  tradeZone.classList.toggle("trade-zone-hover", isHovering);
-  tradeZone.classList.toggle("trade-zone-disabled", !canTradeTile(state));
+  const disabled = !isServerAuthoritativePlaying() || state.status !== "running" || !canTradeTile(state);
+  tradeZone.classList.toggle("trade-zone-hover", isHovering && !disabled);
+  tradeZone.classList.toggle("trade-zone-disabled", disabled);
 }
 
 function renderWinningTable(): void {
@@ -657,9 +634,6 @@ function renderMultiplayerPanel(): void {
 }
 
 function render(): void {
-  if (isServerAuthoritativePlaying() || state.status !== "running") {
-    clearPressureLoop();
-  }
   renderBoardTiles();
   renderShelfTiles();
   renderStatus();
@@ -730,10 +704,6 @@ function endDrag(event: PointerEvent): void {
         col: targetCell.col,
       });
     }
-  } else if (dropInTrade) {
-    state = tradeTile(state, draggedTileId, rng);
-  } else if (targetCell) {
-    state = moveTile(state, draggedTileId, targetCell.row, targetCell.col);
   }
 
   render();
@@ -750,7 +720,7 @@ function onDragMove(event: PointerEvent): void {
 }
 
 function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement): void {
-  if (state.status !== "running" || drag) {
+  if (!isServerAuthoritativePlaying() || !multiplayerRoom || state.status !== "running" || drag) {
     return;
   }
 
@@ -779,14 +749,6 @@ function startDrag(event: PointerEvent, tile: Tile, element: HTMLButtonElement):
   document.addEventListener("pointercancel", endDrag);
 
   event.preventDefault();
-}
-
-function resetGame(players: number): void {
-  state = createGame({ players }, rng);
-  isWinOverlayDismissed = false;
-  renderGrid();
-  render();
-  schedulePressureLoop();
 }
 
 createRoomButton.addEventListener("click", () => {
@@ -818,39 +780,18 @@ playerNameInput.addEventListener("change", () => {
 });
 
 serveButton.addEventListener("click", () => {
-  if (isServerAuthoritativePlaying()) {
-    multiplayerRoom?.send("action_serve_plate");
+  if (!isServerAuthoritativePlaying()) {
+    setRoomNotice("error", "No active round. Ask the host to start a game.");
+    renderMultiplayerPanel();
     return;
   }
 
-  state = servePlate(state);
-  if (state.status === "won") {
-    isWinOverlayDismissed = false;
-  }
-  render();
-});
-
-resetButton.addEventListener("click", () => {
-  resetGame(Number(playerCountSelect.value));
+  multiplayerRoom?.send("action_serve_plate");
 });
 
 overlayCloseButton.addEventListener("click", () => {
   isWinOverlayDismissed = true;
   renderWinOverlay();
-});
-
-overlayResetButton.addEventListener("click", () => {
-  if (isServerAuthoritativePlaying()) {
-    isWinOverlayDismissed = true;
-    setRoomNotice("info", "Host can start the next multiplayer round from the room controls.");
-    render();
-    return;
-  }
-  resetGame(Number(playerCountSelect.value));
-});
-
-playerCountSelect.addEventListener("change", () => {
-  resetGame(Number(playerCountSelect.value));
 });
 
 const boardResizeObserver = new ResizeObserver(() => {
@@ -864,11 +805,10 @@ window.addEventListener("beforeunload", () => {
 });
 
 window.setInterval(() => {
-  if (state.status === "running") {
+  if (multiplayerSnapshot?.phase === "playing" && state.status === "running") {
     renderStatus();
   }
 }, 150);
 
 renderGrid();
 render();
-schedulePressureLoop();

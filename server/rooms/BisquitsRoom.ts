@@ -8,7 +8,7 @@ import {
   tradeTile,
   type GameState,
   type Tile,
-} from "../../src/game/engine";
+} from "../../shared/game/engine";
 import { BisquitsRoomState, PlayerState } from "../state/BisquitsRoomState";
 import { statsStore } from "../stats/StatsStore";
 
