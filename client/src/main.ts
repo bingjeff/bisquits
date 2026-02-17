@@ -824,11 +824,12 @@ function renderMultiplayerPanel(): void {
   } else {
     const localPlayer = snapshot.players[currentRoom.sessionId] ?? null;
     const phase = snapshot.phase;
+    const isPlaying = phase === "playing";
     netStatus.textContent = `Connected · ${phase}`;
     roomCard.classList.remove("panel-hidden");
-    bagCard.classList.remove("panel-hidden");
-    shelfCard.classList.remove("panel-hidden");
-    actionCard.classList.toggle("panel-hidden", phase !== "playing");
+    bagCard.classList.toggle("panel-hidden", !isPlaying);
+    shelfCard.classList.toggle("panel-hidden", !isPlaying);
+    actionCard.classList.toggle("panel-hidden", !isPlaying);
     connectView.classList.add("panel-hidden");
     connectView.setAttribute("aria-hidden", "true");
     sessionView.classList.remove("panel-hidden");
