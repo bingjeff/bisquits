@@ -144,7 +144,7 @@ app.innerHTML = `
 
         <div class="hud-card">
           <p class="label">Room</p>
-          <div class="button-row">
+          <div id="room-controls-row" class="button-row">
             <button id="ready-btn" class="button button-muted">Ready</button>
             <button id="start-room-btn" class="button button-muted">Start</button>
           </div>
@@ -290,6 +290,7 @@ const joinRoomButton = requireElement<HTMLButtonElement>("#join-room-btn");
 const refreshRoomsButton = requireElement<HTMLButtonElement>("#refresh-rooms-btn");
 const availableRoomList = requireElement<HTMLUListElement>("#available-room-list");
 const quitRoomButton = requireElement<HTMLButtonElement>("#quit-room-btn");
+const roomControlsRow = requireElement<HTMLDivElement>("#room-controls-row");
 const readyButton = requireElement<HTMLButtonElement>("#ready-btn");
 const startRoomButton = requireElement<HTMLButtonElement>("#start-room-btn");
 const roomDetails = requireElement<HTMLParagraphElement>("#room-details");
@@ -801,6 +802,8 @@ function renderMultiplayerPanel(): void {
     roomPlayerList.innerHTML = "";
     readyButton.disabled = true;
     startRoomButton.disabled = true;
+    startRoomButton.classList.add("panel-hidden");
+    roomControlsRow.classList.add("button-row-single");
     readyButton.textContent = "Ready";
     startRoomButton.textContent = "Start";
   } else {
@@ -840,9 +843,12 @@ function renderMultiplayerPanel(): void {
     readyButton.disabled = !localPlayer || snapshot.phase === "playing";
     readyButton.textContent = localPlayer?.ready ? "Unready" : "Ready";
 
+    const isHost = snapshot.ownerClientId === currentRoom.sessionId;
+    startRoomButton.classList.toggle("panel-hidden", !isHost);
+    roomControlsRow.classList.toggle("button-row-single", !isHost);
     const canStart =
       snapshot.phase === "lobby" &&
-      snapshot.ownerClientId === currentRoom.sessionId &&
+      isHost &&
       Object.keys(snapshot.players).length >= 2;
     startRoomButton.disabled = !canStart;
     startRoomButton.textContent = snapshot.phase === "playing" ? "Playing" : "Start";
