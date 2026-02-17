@@ -1,6 +1,5 @@
 import { Client, Room } from "colyseus";
 import {
-  canTradeTile,
   createGame,
   moveTile,
   servePlate,
@@ -126,6 +125,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
   private playerGameStates = new Map<string, GameState>();
   private activeRoundPlayers = 0;
+  private sharedBagCount = 0;
 
   onCreate(): void {
     this.setState(new BisquitsRoomState());
@@ -246,6 +246,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     for (const participant of this.clients) {
       this.playerGameStates.set(participant.sessionId, createGame({ players: this.activeRoundPlayers }));
     }
+    this.sharedBagCount = this.getCurrentBagCountFromRound();
 
     this.broadcast("game_started", { startedAt: Date.now() });
     this.sendSnapshotsToAllPlayers("start_game", client.sessionId);
@@ -283,14 +284,20 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       return;
     }
 
-    if (!canTradeTile(current)) {
+    if (this.sharedBagCount <= 3) {
       this.sendActionRejected(client, "Not enough tiles remain to trade.");
       return;
     }
 
+    const previousBagCount = current.drawPile.length;
     const next = tradeTile(current, tileId);
     this.playerGameStates.set(client.sessionId, next);
-    client.send("game_snapshot", this.buildGameSnapshot(next, "trade_tile", client.sessionId));
+    const bagDelta = previousBagCount - next.drawPile.length;
+    if (bagDelta !== 0) {
+      this.sharedBagCount = Math.max(0, this.sharedBagCount - bagDelta);
+      this.synchronizePlayerBagSizes(this.sharedBagCount);
+    }
+    this.sendSnapshotsToAllPlayers("trade_tile", client.sessionId);
   }
 
   private handleServePlate(client: Client): void {
@@ -311,6 +318,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     this.playerGameStates = nextByClientId;
+    this.sharedBagCount = this.getCurrentBagCountFromRound();
     this.sendSnapshotsToAllPlayers("serve_plate", client.sessionId);
 
     const actorNextState = nextByClientId.get(client.sessionId);
@@ -328,6 +336,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
   private buildGameSnapshot(gameState: GameState, reason: string, actorClientId?: string): {
     gameState: GameState;
+    bagCount: number;
     nextPressureAt: number;
     reason: string;
     actorClientId?: string;
@@ -335,6 +344,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   } {
     return {
       gameState,
+      bagCount: this.sharedBagCount,
       nextPressureAt: 0,
       reason,
       actorClientId,
@@ -360,6 +370,9 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
     const players = this.activeRoundPlayers > 0 ? this.activeRoundPlayers : Math.min(4, this.clients.length);
     const created = createGame({ players });
+    if (this.sharedBagCount > 0 && created.drawPile.length !== this.sharedBagCount) {
+      this.resizeBag(created, this.sharedBagCount);
+    }
     this.playerGameStates.set(clientId, created);
     return created;
   }
@@ -367,6 +380,38 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   private clearRoundGames(): void {
     this.playerGameStates.clear();
     this.activeRoundPlayers = 0;
+    this.sharedBagCount = 0;
+  }
+
+  private synchronizePlayerBagSizes(targetCount: number): void {
+    for (const gameState of this.playerGameStates.values()) {
+      if (gameState.drawPile.length !== targetCount) {
+        this.resizeBag(gameState, targetCount);
+      }
+    }
+  }
+
+  private resizeBag(gameState: GameState, targetCount: number): void {
+    if (gameState.drawPile.length > targetCount) {
+      gameState.drawPile.splice(targetCount);
+      return;
+    }
+
+    const missing = targetCount - gameState.drawPile.length;
+    if (missing <= 0) {
+      return;
+    }
+
+    const refillLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for (let i = 0; i < missing; i += 1) {
+      const slot = Math.floor(Math.random() * refillLetters.length);
+      gameState.drawPile.push(refillLetters[slot] ?? "E");
+    }
+  }
+
+  private getCurrentBagCountFromRound(): number {
+    const firstState = this.playerGameStates.values().next().value as GameState | undefined;
+    return firstState ? firstState.drawPile.length : 0;
   }
 
   private async finalizeWinner(winnerClientId: string): Promise<void> {

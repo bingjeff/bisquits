@@ -173,6 +173,7 @@ function waitForGameSnapshot(
   predicate: (snapshot: {
     reason: string;
     actorClientId?: string;
+    bagCount?: number;
     nextPressureAt?: number;
     gameState: { status?: string; tiles: unknown[] };
   }) => boolean,
@@ -180,6 +181,7 @@ function waitForGameSnapshot(
 ): Promise<{
   reason: string;
   actorClientId?: string;
+  bagCount?: number;
   nextPressureAt?: number;
   gameState: { status?: string; tiles: unknown[] };
 }> {
@@ -192,6 +194,7 @@ function waitForGameSnapshot(
       const snapshot = payload as {
         reason: string;
         actorClientId?: string;
+        bagCount?: number;
         nextPressureAt?: number;
         gameState: { status?: string; tiles: unknown[] };
       };
@@ -334,10 +337,12 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     assert.equal(snapshot.reason, "start_game");
     assert.equal(snapshot.nextPressureAt, 0);
     assert.equal(snapshot.gameState.status, "running");
+    assert.equal(typeof snapshot.bagCount, "number");
     assert.ok(Array.isArray(snapshot.gameState.tiles));
     assert.ok(snapshot.gameState.tiles.length > 0);
     assert.equal(guestStartSnapshot.reason, "start_game");
     assert.equal(guestStartSnapshot.nextPressureAt, 0);
+    assert.equal(snapshot.bagCount, guestStartSnapshot.bagCount);
 
     const guestSawHostMovePromise = waitForMessage<{
       reason: string;
@@ -396,12 +401,29 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
       col: 2,
     });
 
+    const bagBeforeTrade = snapshot.bagCount ?? 0;
+    const hostTradeSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (message) => message.reason === "trade_tile" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+    const guestTradeSnapshotPromise = waitForGameSnapshot(
+      guestRoom,
+      (message) => message.reason === "trade_tile" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+    hostRoom.send("action_trade_tile", { tileId: "t1" });
+    const hostTradeSnapshot = await hostTradeSnapshotPromise;
+    const guestTradeSnapshot = await guestTradeSnapshotPromise;
+    assert.equal(hostTradeSnapshot.bagCount, bagBeforeTrade - 2);
+    assert.equal(guestTradeSnapshot.bagCount, hostTradeSnapshot.bagCount);
+
     const rejectedServePromise = waitForMessage<{ message?: string }>(hostRoom, "action_rejected", 5000);
     hostRoom.send("action_serve_plate");
     const rejectedServe = await rejectedServePromise;
     assert.match(String(rejectedServe.message ?? ""), /Place all tray tiles/i);
 
-    let hostStateForServe = hostMoveSnapshot;
+    let hostStateForServe = hostTradeSnapshot;
     const idsToPlace = stagingTileIds(hostStateForServe);
     for (let i = 0; i < idsToPlace.length; i += 1) {
       const tileId = idsToPlace[i];
@@ -421,7 +443,7 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
 
     assert.equal(stagingTileCount(hostStateForServe), 0);
 
-    const guestStagingBeforeServe = stagingTileCount(guestMoveSnapshot);
+    const guestStagingBeforeServe = stagingTileCount(guestTradeSnapshot);
     const hostServeSnapshotPromise = waitForGameSnapshot(
       hostRoom,
       (message) => message.reason === "serve_plate" && message.actorClientId === hostRoom.sessionId,
@@ -437,6 +459,7 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
 
     const hostServeSnapshot = await hostServeSnapshotPromise;
     const guestServeSnapshot = await guestServeSnapshotPromise;
+    assert.equal(hostServeSnapshot.bagCount, guestServeSnapshot.bagCount);
     assert.equal(stagingTileCount(hostServeSnapshot) > 0, true);
     assert.equal(stagingTileCount(guestServeSnapshot), guestStagingBeforeServe + 1);
 

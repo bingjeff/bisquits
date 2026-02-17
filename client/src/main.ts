@@ -1,6 +1,6 @@
 import { Client as ColyseusClient, type Room } from "colyseus.js";
 import "./style.css";
-import { canTradeTile, DEFAULT_CONFIG, type GameState, type Tile } from "../../shared/game/engine";
+import { DEFAULT_CONFIG, type GameState, type Tile } from "../../shared/game/engine";
 
 interface DragState {
   tileId: string;
@@ -59,6 +59,7 @@ interface StatsSnapshot {
 
 interface GameSnapshotMessage {
   gameState: GameState;
+  bagCount: number;
   reason: string;
   actorClientId?: string;
   serverTime: number;
@@ -323,6 +324,7 @@ let listedRooms: ListedRoom[] = [];
 let isRefreshingRooms = false;
 let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
+let sharedBagCount = 0;
 
 function getBoardMetrics(): { width: number; height: number; cellWidth: number; cellHeight: number; tileSize: number } {
   const rect = board.getBoundingClientRect();
@@ -517,6 +519,7 @@ async function leaveRoomSilently(): Promise<void> {
   multiplayerRoom = null;
   multiplayerSnapshot = null;
   state = createPlaceholderState();
+  sharedBagCount = 0;
   try {
     await roomToLeave.leave();
   } catch {
@@ -553,6 +556,7 @@ function attachRoom(room: Room): void {
 
   room.onMessage("game_snapshot", (payload: GameSnapshotMessage) => {
     state = payload.gameState;
+    sharedBagCount = Number.isFinite(payload.bagCount) ? payload.bagCount : state.drawPile.length;
     if (state.status === "won") {
       isWinOverlayDismissed = false;
     } else {
@@ -582,6 +586,7 @@ function attachRoom(room: Room): void {
     multiplayerRoom = null;
     multiplayerSnapshot = null;
     state = createPlaceholderState();
+    sharedBagCount = 0;
     setRoomNotice("error", `Disconnected from room (code ${code}).`);
     render();
   });
@@ -721,14 +726,14 @@ function renderStatus(): void {
 
   statusText.textContent = statusMap[state.status];
   actionText.textContent = state.lastAction;
-  bagCount.textContent = `${state.drawPile.length}`;
+  bagCount.textContent = `${sharedBagCount}`;
 
   serveButton.disabled = state.status !== "running" || hasStagingTiles(state);
-  serveButton.textContent = state.drawPile.length <= state.config.players ? "Serve Final Plate" : "Serve Plate";
+  serveButton.textContent = sharedBagCount <= state.config.players ? "Serve Final Plate" : "Serve Plate";
 }
 
 function renderTradeZoneState(isHovering: boolean): void {
-  const disabled = !isServerAuthoritativePlaying() || state.status !== "running" || !canTradeTile(state);
+  const disabled = !isServerAuthoritativePlaying() || state.status !== "running" || sharedBagCount <= 3;
   tradeZone.classList.toggle("trade-zone-hover", isHovering && !disabled);
   tradeZone.classList.toggle("trade-zone-disabled", disabled);
 }
