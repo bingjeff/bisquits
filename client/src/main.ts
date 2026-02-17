@@ -117,18 +117,33 @@ app.innerHTML = `
 
       <aside class="hud-panel">
         <div class="hud-card">
-          <p class="label">Multiplayer</p>
+          <p class="label">Connection</p>
           <p id="net-status" class="metric-subtle">Disconnected</p>
-          <label class="field-label" for="player-name-input">Name</label>
-          <input id="player-name-input" class="text-input" maxlength="20" autocomplete="nickname" />
-          <div class="button-row">
-            <button id="create-room-btn" class="button">Create</button>
-            <button id="join-room-btn" class="button button-muted">Join</button>
+          <div id="connect-view">
+            <label class="field-label" for="player-name-input">Name</label>
+            <input id="player-name-input" class="text-input" maxlength="20" autocomplete="nickname" />
+            <div class="button-row">
+              <button id="create-room-btn" class="button">Create</button>
+              <button id="join-room-btn" class="button button-muted">Join</button>
+            </div>
+            <div class="button-row button-row-single">
+              <button id="refresh-rooms-btn" class="button button-muted">Refresh Open Rooms</button>
+            </div>
+            <ul id="available-room-list" class="room-list"></ul>
           </div>
-          <div class="button-row button-row-single">
-            <button id="refresh-rooms-btn" class="button button-muted">Refresh Open Rooms</button>
+          <div id="session-view" class="panel-hidden" aria-hidden="true">
+            <p class="field-label">Name</p>
+            <p id="active-player-name" class="metric-subtle player-name-label"></p>
+            <p class="field-label">Room</p>
+            <p id="active-room-id" class="metric-subtle room-id-label"></p>
+            <div class="button-row button-row-single">
+              <button id="quit-room-btn" class="button button-muted">Quit</button>
+            </div>
           </div>
-          <ul id="available-room-list" class="room-list"></ul>
+        </div>
+
+        <div class="hud-card">
+          <p class="label">Room</p>
           <div class="button-row">
             <button id="ready-btn" class="button button-muted">Ready</button>
             <button id="start-room-btn" class="button button-muted">Start</button>
@@ -266,10 +281,15 @@ const serveButton = requireElement<HTMLButtonElement>("#serve-btn");
 
 const netStatus = requireElement<HTMLParagraphElement>("#net-status");
 const playerNameInput = requireElement<HTMLInputElement>("#player-name-input");
+const connectView = requireElement<HTMLDivElement>("#connect-view");
+const sessionView = requireElement<HTMLDivElement>("#session-view");
+const activePlayerName = requireElement<HTMLParagraphElement>("#active-player-name");
+const activeRoomId = requireElement<HTMLParagraphElement>("#active-room-id");
 const createRoomButton = requireElement<HTMLButtonElement>("#create-room-btn");
 const joinRoomButton = requireElement<HTMLButtonElement>("#join-room-btn");
 const refreshRoomsButton = requireElement<HTMLButtonElement>("#refresh-rooms-btn");
 const availableRoomList = requireElement<HTMLUListElement>("#available-room-list");
+const quitRoomButton = requireElement<HTMLButtonElement>("#quit-room-btn");
 const readyButton = requireElement<HTMLButtonElement>("#ready-btn");
 const startRoomButton = requireElement<HTMLButtonElement>("#start-room-btn");
 const roomDetails = requireElement<HTMLParagraphElement>("#room-details");
@@ -771,6 +791,12 @@ function renderMultiplayerPanel(): void {
 
   if (!currentRoom || !snapshot) {
     netStatus.textContent = `Disconnected (${colyseusEndpoint})`;
+    connectView.classList.remove("panel-hidden");
+    connectView.setAttribute("aria-hidden", "false");
+    sessionView.classList.add("panel-hidden");
+    sessionView.setAttribute("aria-hidden", "true");
+    activePlayerName.textContent = "";
+    activeRoomId.textContent = "";
     roomDetails.textContent = "";
     roomPlayerList.innerHTML = "";
     readyButton.disabled = true;
@@ -781,6 +807,12 @@ function renderMultiplayerPanel(): void {
     const localPlayer = snapshot.players[currentRoom.sessionId] ?? null;
     const phase = snapshot.phase;
     netStatus.textContent = `Connected · ${phase}`;
+    connectView.classList.add("panel-hidden");
+    connectView.setAttribute("aria-hidden", "true");
+    sessionView.classList.remove("panel-hidden");
+    sessionView.setAttribute("aria-hidden", "false");
+    activePlayerName.textContent = localPlayer?.name ?? playerNameInput.value;
+    activeRoomId.textContent = currentRoom.roomId;
     const playerCount = Object.keys(snapshot.players).length;
     roomDetails.textContent = `Room ${currentRoom.roomId} · ${playerCount}/4 players`;
 
@@ -983,12 +1015,17 @@ startRoomButton.addEventListener("click", () => {
   multiplayerRoom?.send("start_game");
 });
 
+quitRoomButton.addEventListener("click", () => {
+  void (async () => {
+    await leaveRoomSilently();
+    setRoomNotice("info", "Left room.");
+    render();
+  })();
+});
+
 playerNameInput.addEventListener("change", () => {
   const nextName = sanitizePlayerName(playerNameInput.value);
   playerNameInput.value = nextName;
-  if (multiplayerRoom) {
-    multiplayerRoom.send("set_name", { name: nextName });
-  }
 });
 
 serveButton.addEventListener("click", () => {
