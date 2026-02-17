@@ -104,5 +104,6 @@ test("applyPressureTick ends in loss when no full round can be served", () => {
   const pressured = applyPressureTick(nearEnd);
 
   assert.equal(pressured.status, "lost");
-  assert.match(pressured.lastAction, /lost/i);
+  assert.notEqual(pressured.lastAction, nearEnd.lastAction);
+  assert.equal(pressured.lastAction.length > 0, true);
 });

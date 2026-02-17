@@ -109,8 +109,7 @@ app.innerHTML = `
   <main class="app-shell">
     <header class="header">
       <div>
-        <p class="eyebrow">Bisquits Prototype</p>
-        <h1>Multiplayer Table</h1>
+        <p class="eyebrow">Bisquits</p>
       </div>
     </header>
 
@@ -179,10 +178,10 @@ app.innerHTML = `
         <div id="action-card" class="hud-card">
           <p class="label">Actions</p>
           <div id="trade-zone" class="trade-zone" aria-label="Trade zone">
-            Drop a tile here to trade one for three.
+            Drop stale bisquit here for three fresh ones!
           </div>
           <div id="serve-row" class="button-row button-row-single">
-            <button id="serve-btn" class="button">Serve Plate</button>
+            <button id="serve-btn" class="button">Serve the bisquits!</button>
           </div>
         </div>
       </aside>
@@ -192,7 +191,7 @@ app.innerHTML = `
     <div class="overlay-card">
       <p class="eyebrow">Round Complete</p>
       <h2 class="overlay-title">Winning Plate</h2>
-      <p class="overlay-subtitle">Final board layout for table review.</p>
+      <p class="overlay-subtitle">Are these bisquits in order?</p>
       <div id="winning-table" class="winning-table" aria-label="Winning table"></div>
       <div class="button-row overlay-actions button-row-single">
         <button id="overlay-close-btn" class="button">Close</button>
@@ -638,6 +637,8 @@ async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Prom
 
 function renderGrid(): void {
   boardCells.innerHTML = "";
+  boardCells.style.gridTemplateColumns = `repeat(${state.config.cols}, 1fr)`;
+  boardCells.style.gridTemplateRows = `repeat(${state.config.rows}, 1fr)`;
   for (let row = 1; row <= state.config.rows; row += 1) {
     for (let col = 1; col <= state.config.cols; col += 1) {
       const cell = document.createElement("div");
@@ -754,6 +755,8 @@ function renderTradeZoneState(isHovering: boolean): void {
 
 function renderWinningTable(): void {
   winningTable.innerHTML = "";
+  winningTable.style.gridTemplateColumns = `repeat(${state.config.cols}, 1fr)`;
+  winningTable.style.gridTemplateRows = `repeat(${state.config.rows}, 1fr)`;
   const boardTilesByCell = new Map<string, Tile & { zone: "board"; row: number; col: number }>();
   for (const tile of winningBoardTiles) {
     boardTilesByCell.set(`${tile.row}:${tile.col}`, tile);
@@ -849,7 +852,7 @@ function renderMultiplayerPanel(): void {
       if (isSelf) {
         roleTokens.push("YOU");
       }
-      roleTokens.push(player.ready ? "READY" : "NOT READY");
+      roleTokens.push(snapshot.phase === "playing" ? "PLAYING" : player.ready ? "READY" : "NOT READY");
       const tag = roleTokens.join(" · ");
       const longestWord = player.longestWord ? ` · best: ${player.longestWord}` : "";
       item.textContent = `${player.name} (${tag}) · ${player.wins}W/${player.gamesPlayed}G${longestWord}`;

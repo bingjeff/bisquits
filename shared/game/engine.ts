@@ -30,10 +30,10 @@ export interface GameState {
 export type RandomSource = () => number;
 
 export const DEFAULT_CONFIG: GameConfig = {
-  rows: 12,
-  cols: 12,
+  rows: 16,
+  cols: 16,
   players: 4,
-  initialVisibleTiles: 12,
+  initialVisibleTiles: 21,
   pressureRangeMs: [4500, 8500],
 };
 
@@ -293,7 +293,7 @@ export function createGame(
 
   return {
     ...state,
-    lastAction: "Shelf stocked. Drag tiles onto the board, trade one-for-three, and keep serving.",
+    lastAction: "Shelf stocked. Drag bisquits onto the board, trade one-for-three, and keep serving.",
   };
 }
 
@@ -306,14 +306,14 @@ export function servePlate(baseState: GameState): GameState {
     return {
       ...baseState,
       status: "won",
-      lastAction: "You served the final plate and won.",
+      lastAction: "You served the final plate of bisquits and won.",
     };
   }
 
   const next = performServeRound(baseState);
   return {
     ...next,
-    lastAction: "You served a plate. Opponents also drew hidden tiles.",
+    lastAction: "You got a bisquit and served some to your friends.",
   };
 }
 
@@ -326,14 +326,14 @@ export function applyPressureTick(baseState: GameState): GameState {
     return {
       ...baseState,
       status: "lost",
-      lastAction: "The bag ran dry before your next serve. You lost.",
+      lastAction: "Somebody ate all their bisquits before you could stuff 'em on your plate.",
     };
   }
 
   const next = performServeRound(baseState);
   return {
     ...next,
-    lastAction: "Pressure tick: the table advanced and a new tile arrived.",
+    lastAction: "Pressure tick: the table advanced and a new bisquit arrived.",
   };
 }
 
@@ -353,7 +353,7 @@ export function tradeTile(
   if (!canTradeTile(baseState)) {
     return {
       ...baseState,
-      lastAction: "Not enough tiles remain to trade.",
+      lastAction: "Not enough bisquits remain to trade.",
     };
   }
 
@@ -371,7 +371,7 @@ export function tradeTile(
   }
 
   next.turn += 1;
-  next.lastAction = `Traded ${discarded.letter} for three new tiles.`;
+  next.lastAction = `Traded ${discarded.letter} for three new bisquits.`;
   return next;
 }
 

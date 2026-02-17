@@ -311,6 +311,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       return;
     }
 
+    const previousSharedBagCount = this.sharedBagCount;
     const nextByClientId = new Map<string, GameState>();
     for (const participant of this.clients) {
       const participantState = this.getOrCreatePlayerGameState(participant.sessionId);
@@ -318,10 +319,17 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     this.playerGameStates = nextByClientId;
-    this.sharedBagCount = this.getCurrentBagCountFromRound();
+    const actorNextState = nextByClientId.get(client.sessionId);
+    if (actorNextState?.status === "running") {
+      const servingPlayers = Math.min(this.maxClients, this.clients.length);
+      this.sharedBagCount = Math.max(0, previousSharedBagCount - servingPlayers);
+      this.synchronizePlayerBagSizes(this.sharedBagCount);
+    } else {
+      this.sharedBagCount = this.getCurrentBagCountFromRound();
+    }
+
     this.sendSnapshotsToAllPlayers("serve_plate", client.sessionId);
 
-    const actorNextState = nextByClientId.get(client.sessionId);
     if (!actorNextState || actorNextState.status === "running") {
       return;
     }

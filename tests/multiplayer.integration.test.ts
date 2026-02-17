@@ -487,3 +487,121 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     await server.stop();
   }
 });
+
+test("multiplayer integration: late join contributes to shared bag burn on serve", { timeout: 60000 }, async () => {
+  const port = await getRandomPort();
+  const server = await startServer(port);
+
+  const endpoint = `ws://localhost:${port}`;
+  const hostClient = new ColyseusClient(endpoint);
+  const guestClient = new ColyseusClient(endpoint);
+  const lateClient = new ColyseusClient(endpoint);
+
+  let hostRoom: Room | null = null;
+  let guestRoom: Room | null = null;
+  let lateRoom: Room | null = null;
+
+  try {
+    hostRoom = await hostClient.create("bisquits", { name: "Host" });
+    guestRoom = await guestClient.joinById(hostRoom.roomId, { name: "Guest" });
+
+    hostRoom.onMessage("*", () => {
+      // Ignore unrelated room messages in this test.
+    });
+    guestRoom.onMessage("*", () => {
+      // Ignore unrelated room messages in this test.
+    });
+
+    const startedPromise = waitForMessage<{ startedAt: number }>(hostRoom, "game_started", 7000);
+    const hostStartSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (snapshot) => snapshot.reason === "start_game" && snapshot.gameState.status === "running",
+      7000,
+    );
+
+    hostRoom.send("set_ready", { ready: true });
+    guestRoom.send("set_ready", { ready: true });
+    hostRoom.send("start_game");
+
+    await startedPromise;
+    let hostSnapshot = await hostStartSnapshotPromise;
+
+    lateRoom = await lateClient.joinById(hostRoom.roomId, { name: "Late" });
+    lateRoom.onMessage("*", () => {
+      // Ignore unrelated room messages in this test.
+    });
+
+    const lateSyncSnapshot = await waitForGameSnapshot(
+      lateRoom,
+      (snapshot) => snapshot.reason === "sync" && snapshot.gameState.status === "running",
+      7000,
+    );
+    const bagBeforeServe = hostSnapshot.bagCount ?? 0;
+    assert.equal(lateSyncSnapshot.bagCount, bagBeforeServe);
+
+    const idsToPlace = stagingTileIds(hostSnapshot);
+    for (let i = 0; i < idsToPlace.length; i += 1) {
+      const tileId = idsToPlace[i];
+      const row = Math.floor((i + 1) / 16) + 1;
+      const col = ((i + 1) % 16) + 1;
+      const nextHostMovePromise = waitForGameSnapshot(
+        hostRoom,
+        (message) =>
+          message.reason === "move_tile" &&
+          message.actorClientId === hostRoom.sessionId &&
+          tilePositionById(message, tileId)?.zone === "board",
+        7000,
+      );
+      hostRoom.send("action_move_tile", { tileId, row, col });
+      hostSnapshot = await nextHostMovePromise;
+    }
+
+    assert.equal(stagingTileCount(hostSnapshot), 0);
+
+    const hostServeSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (message) => message.reason === "serve_plate" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+    const guestServeSnapshotPromise = waitForGameSnapshot(
+      guestRoom,
+      (message) => message.reason === "serve_plate" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+    const lateServeSnapshotPromise = waitForGameSnapshot(
+      lateRoom,
+      (message) => message.reason === "serve_plate" && message.actorClientId === hostRoom.sessionId,
+      7000,
+    );
+
+    hostRoom.send("action_serve_plate");
+
+    const hostServeSnapshot = await hostServeSnapshotPromise;
+    const guestServeSnapshot = await guestServeSnapshotPromise;
+    const lateServeSnapshot = await lateServeSnapshotPromise;
+
+    assert.equal(hostServeSnapshot.bagCount, bagBeforeServe - 3);
+    assert.equal(guestServeSnapshot.bagCount, hostServeSnapshot.bagCount);
+    assert.equal(lateServeSnapshot.bagCount, hostServeSnapshot.bagCount);
+  } finally {
+    if (hostRoom) {
+      await hostRoom.leave().catch(() => {
+        // Ignore teardown race conditions.
+      });
+    }
+
+    if (guestRoom) {
+      await guestRoom.leave().catch(() => {
+        // Ignore teardown race conditions.
+      });
+    }
+
+    if (lateRoom) {
+      await lateRoom.leave().catch(() => {
+        // Ignore teardown race conditions.
+      });
+    }
+
+    await server.stop();
+  }
+});
