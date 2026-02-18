@@ -17,4 +17,4 @@ ENV PORT=8080
 
 EXPOSE 8080
 
-CMD ["pnpm", "server"]
+CMD ["pnpm", "run", "server"]

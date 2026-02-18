@@ -281,6 +281,43 @@ function roomActionLog(json: Record<string, unknown>): Array<Record<string, unkn
   return entries.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"));
 }
 
+test("multiplayer integration: at most two rooms can be created", { timeout: 60000 }, async () => {
+  const port = await getRandomPort();
+  const server = await startServer(port);
+
+  const endpoint = `ws://localhost:${port}`;
+  const roomAClient = new ColyseusClient(endpoint);
+  const roomBClient = new ColyseusClient(endpoint);
+  const roomCClient = new ColyseusClient(endpoint);
+
+  let roomA: Room | null = null;
+  let roomB: Room | null = null;
+
+  try {
+    roomA = await roomAClient.create("bisquits", { name: "Alpha" });
+    roomB = await roomBClient.create("bisquits", { name: "Beta" });
+
+    await assert.rejects(
+      roomCClient.create("bisquits", { name: "Gamma" }),
+      /Only 2 rooms can exist at once/i,
+    );
+  } finally {
+    if (roomA) {
+      await roomA.leave().catch(() => {
+        // Ignore teardown race conditions.
+      });
+    }
+
+    if (roomB) {
+      await roomB.leave().catch(() => {
+        // Ignore teardown race conditions.
+      });
+    }
+
+    await server.stop();
+  }
+});
+
 test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, async () => {
   const port = await getRandomPort();
   const server = await startServer(port);

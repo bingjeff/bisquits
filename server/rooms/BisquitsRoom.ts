@@ -155,6 +155,9 @@ function parseBoundedInt(input: string | undefined, fallback: number, min: numbe
 }
 
 export class BisquitsRoom extends Room<BisquitsRoomState> {
+  private static readonly MAX_ACTIVE_ROOMS = 2;
+  private static activeRoomCount = 0;
+
   maxClients = 4;
 
   private readonly seatReservationSeconds = parseBoundedInt(process.env.BISQUITS_RESERVATION_SECONDS, 300, 10, 3600);
@@ -165,63 +168,70 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   private resumeTokenByPlayerId = new Map<string, string>();
   private seatReservationsByToken = new Map<string, SeatReservation>();
   private reservationSweepTimer: NodeJS.Timeout | null = null;
+  private roomSlotClaimed = false;
 
   private activeRoundPlayers = 0;
   private sharedBagCount = 0;
 
   onCreate(): void {
-    this.setState(new BisquitsRoomState());
-    this.setPrivate(false);
-    this.autoDispose = true;
-    this.patchRate = 50;
+    this.claimRoomSlot();
+    try {
+      this.setState(new BisquitsRoomState());
+      this.setPrivate(false);
+      this.autoDispose = true;
+      this.patchRate = 50;
 
-    this.reservationSweepTimer = setInterval(() => {
-      this.pruneExpiredSeatReservations();
-    }, 1000);
-    this.reservationSweepTimer.unref();
+      this.reservationSweepTimer = setInterval(() => {
+        this.pruneExpiredSeatReservations();
+      }, 1000);
+      this.reservationSweepTimer.unref();
 
-    this.onMessage("set_name", (client, message: PlayerNameMessage) => {
-      this.renamePlayer(client, message.name);
-    });
-
-    this.onMessage("set_ready", (client, message: ReadyMessage) => {
-      const player = this.state.players.get(client.sessionId);
-      if (!player || this.state.phase !== "lobby" || !player.connected) {
-        return;
-      }
-      const nextReady = Boolean(message?.ready);
-      if (player.ready === nextReady) {
-        return;
-      }
-      player.ready = nextReady;
-      this.broadcast("room_notice", {
-        level: "info",
-        message: `${player.name} is ${nextReady ? "ready" : "not ready"}.`,
+      this.onMessage("set_name", (client, message: PlayerNameMessage) => {
+        this.renamePlayer(client, message.name);
       });
+
+      this.onMessage("set_ready", (client, message: ReadyMessage) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player || this.state.phase !== "lobby" || !player.connected) {
+          return;
+        }
+        const nextReady = Boolean(message?.ready);
+        if (player.ready === nextReady) {
+          return;
+        }
+        player.ready = nextReady;
+        this.broadcast("room_notice", {
+          level: "info",
+          message: `${player.name} is ${nextReady ? "ready" : "not ready"}.`,
+        });
+        this.updateRoomMetadata();
+      });
+
+      this.onMessage("start_game", (client) => {
+        this.startAuthoritativeGame(client);
+      });
+
+      this.onMessage("request_seat_token", (client) => {
+        this.sendSeatToken(client, client.sessionId);
+      });
+
+      this.onMessage("action_move_tile", (client, message: MoveTileMessage) => {
+        this.handleMoveTile(client, message);
+      });
+
+      this.onMessage("action_trade_tile", (client, message: TradeTileMessage) => {
+        this.handleTradeTile(client, message);
+      });
+
+      this.onMessage("action_serve_plate", (client) => {
+        this.handleServePlate(client);
+      });
+
       this.updateRoomMetadata();
-    });
-
-    this.onMessage("start_game", (client) => {
-      this.startAuthoritativeGame(client);
-    });
-
-    this.onMessage("request_seat_token", (client) => {
-      this.sendSeatToken(client, client.sessionId);
-    });
-
-    this.onMessage("action_move_tile", (client, message: MoveTileMessage) => {
-      this.handleMoveTile(client, message);
-    });
-
-    this.onMessage("action_trade_tile", (client, message: TradeTileMessage) => {
-      this.handleTradeTile(client, message);
-    });
-
-    this.onMessage("action_serve_plate", (client) => {
-      this.handleServePlate(client);
-    });
-
-    this.updateRoomMetadata();
+    } catch (error) {
+      this.releaseRoomSlot();
+      throw error;
+    }
   }
 
   async onJoin(client: Client, options: PlayerNameMessage): Promise<void> {
@@ -949,5 +959,25 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       clearInterval(this.reservationSweepTimer);
       this.reservationSweepTimer = null;
     }
+    this.releaseRoomSlot();
+  }
+
+  private claimRoomSlot(): void {
+    if (this.roomSlotClaimed) {
+      return;
+    }
+    if (BisquitsRoom.activeRoomCount >= BisquitsRoom.MAX_ACTIVE_ROOMS) {
+      throw new Error(`Only ${BisquitsRoom.MAX_ACTIVE_ROOMS} rooms can exist at once.`);
+    }
+    BisquitsRoom.activeRoomCount += 1;
+    this.roomSlotClaimed = true;
+  }
+
+  private releaseRoomSlot(): void {
+    if (!this.roomSlotClaimed) {
+      return;
+    }
+    this.roomSlotClaimed = false;
+    BisquitsRoom.activeRoomCount = Math.max(0, BisquitsRoom.activeRoomCount - 1);
   }
 }
