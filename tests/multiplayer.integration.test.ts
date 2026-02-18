@@ -466,12 +466,6 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     const logs = server.logs();
     assert.equal(logs.includes("ERR_HTTP_HEADERS_SENT"), false, logs);
   } finally {
-    if (hostRoom) {
-      await hostRoom.leave().catch(() => {
-        // Ignore teardown race conditions.
-      });
-    }
-
     if (guestRoom) {
       await guestRoom.leave().catch(() => {
         // Ignore teardown race conditions.
@@ -602,6 +596,96 @@ test("multiplayer integration: late join contributes to shared bag burn on serve
       });
     }
 
+    await server.stop();
+  }
+});
+
+test("multiplayer integration: disconnected player can rejoin reserved seat and recover board", { timeout: 60000 }, async () => {
+  const port = await getRandomPort();
+  const server = await startServer(port);
+
+  const endpoint = `ws://localhost:${port}`;
+  const hostClient = new ColyseusClient(endpoint);
+  const guestClient = new ColyseusClient(endpoint);
+  const reclaimClient = new ColyseusClient(endpoint);
+
+  let hostRoom: Room | null = null;
+  let guestRoom: Room | null = null;
+  let reclaimedRoom: Room | null = null;
+
+  try {
+    hostRoom = await hostClient.create("bisquits", { name: "Host" });
+    guestRoom = await guestClient.joinById(hostRoom.roomId, { name: "Guest" });
+
+    hostRoom.onMessage("*", () => {
+      // Ignore unrelated room messages in this test.
+    });
+    guestRoom.onMessage("*", () => {
+      // Ignore unrelated room messages in this test.
+    });
+
+    const tokenPromise = waitForMessage<{ token?: string }>(hostRoom, "seat_token", 7000);
+    hostRoom.send("request_seat_token");
+    const seatTokenPayload = await tokenPromise;
+    const resumeToken = String(seatTokenPayload.token ?? "");
+    assert.equal(resumeToken.length > 0, true);
+
+    const startedPromise = waitForMessage<{ startedAt: number }>(hostRoom, "game_started", 7000);
+    const hostStartSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (snapshot) => snapshot.reason === "start_game" && snapshot.gameState.status === "running",
+      7000,
+    );
+
+    hostRoom.send("set_ready", { ready: true });
+    guestRoom.send("set_ready", { ready: true });
+    hostRoom.send("start_game");
+
+    await startedPromise;
+    await hostStartSnapshotPromise;
+
+    const hostMoveSnapshotPromise = waitForGameSnapshot(
+      hostRoom,
+      (message) => message.reason === "move_tile" && message.actorClientId === hostRoom?.sessionId,
+      7000,
+    );
+    hostRoom.send("action_move_tile", { tileId: "t1", row: 1, col: 1 });
+    const hostMoveSnapshot = await hostMoveSnapshotPromise;
+    assert.deepEqual(tilePositionById(hostMoveSnapshot, "t1"), {
+      zone: "board",
+      row: 1,
+      col: 1,
+    });
+
+    const disconnectedStatePromise = waitForRoomState(
+      guestRoom,
+      (json) => {
+        const players = Object.values((json.players as Record<string, unknown>) ?? {}) as Array<Record<string, unknown>>;
+        return players.some((player) => player.name === "Host" && player.connected === false);
+      },
+      7000,
+    );
+
+    void hostRoom.leave(false);
+    await disconnectedStatePromise;
+
+    reclaimedRoom = await reclaimClient.joinById(hostRoom.roomId, {
+      name: "Host",
+      resumeToken,
+    });
+
+    const reclaimedSyncSnapshot = await waitForGameSnapshot(
+      reclaimedRoom,
+      (message) => message.reason === "sync" && message.gameState.status === "running",
+      7000,
+    );
+
+    assert.deepEqual(tilePositionById(reclaimedSyncSnapshot, "t1"), {
+      zone: "board",
+      row: 1,
+      col: 1,
+    });
+  } finally {
     await server.stop();
   }
 });

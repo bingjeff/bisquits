@@ -3,8 +3,10 @@ import { MapSchema, Schema, defineTypes } from "@colyseus/schema";
 export type RoomPhase = "lobby" | "playing";
 
 export class PlayerState extends Schema {
+  declare playerId: string;
   declare clientId: string;
   declare name: string;
+  declare connected: boolean;
   declare ready: boolean;
   declare joinedAt: number;
   declare wins: number;
@@ -13,8 +15,10 @@ export class PlayerState extends Schema {
 
   constructor() {
     super();
+    this.playerId = "";
     this.clientId = "";
     this.name = "";
+    this.connected = true;
     this.ready = false;
     this.joinedAt = Date.now();
     this.wins = 0;
@@ -24,8 +28,10 @@ export class PlayerState extends Schema {
 }
 
 defineTypes(PlayerState, {
+  playerId: "string",
   clientId: "string",
   name: "string",
+  connected: "boolean",
   ready: "boolean",
   joinedAt: "number",
   wins: "number",

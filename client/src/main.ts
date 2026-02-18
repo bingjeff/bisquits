@@ -13,8 +13,10 @@ interface DragState {
 }
 
 interface MultiplayerPlayerSnapshot {
+  playerId: string;
   clientId: string;
   name: string;
+  connected: boolean;
   ready: boolean;
   wins: number;
   gamesPlayed: number;
@@ -76,6 +78,8 @@ interface ListedRoomMetadata {
   phase?: string;
   ownerName?: string;
   playerCount?: number;
+  connectedCount?: number;
+  reservedCount?: number;
   maxPlayers?: number;
   hasActiveGame?: boolean;
 }
@@ -86,6 +90,20 @@ interface ListedRoom {
   clients: number;
   maxClients: number;
   metadata: ListedRoomMetadata;
+}
+
+interface SeatTokenMessage {
+  token?: string;
+  playerId?: string;
+  roomId?: string;
+  expiresInSeconds?: number;
+}
+
+interface StoredSeatSession {
+  roomId: string;
+  playerName: string;
+  resumeToken: string;
+  updatedAt: number;
 }
 
 function createPlaceholderState(): GameState {
@@ -267,6 +285,10 @@ function normalizeListedRoom(value: unknown): ListedRoom | null {
       phase: typeof metadataSource.phase === "string" ? metadataSource.phase : undefined,
       ownerName: typeof metadataSource.ownerName === "string" ? metadataSource.ownerName : undefined,
       playerCount: Number.isFinite(Number(metadataSource.playerCount)) ? Number(metadataSource.playerCount) : undefined,
+      connectedCount: Number.isFinite(Number(metadataSource.connectedCount))
+        ? Number(metadataSource.connectedCount)
+        : undefined,
+      reservedCount: Number.isFinite(Number(metadataSource.reservedCount)) ? Number(metadataSource.reservedCount) : undefined,
       maxPlayers: Number.isFinite(Number(metadataSource.maxPlayers)) ? Number(metadataSource.maxPlayers) : undefined,
       hasActiveGame: Boolean(metadataSource.hasActiveGame),
     },
@@ -316,6 +338,8 @@ const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
 const defaultColyseusEndpoint = `${wsProtocol}://${window.location.hostname}:2567`;
 const colyseusEndpoint = import.meta.env.VITE_COLYSEUS_URL || defaultColyseusEndpoint;
 const multiplayerClient = new ColyseusClient(colyseusEndpoint);
+const STORED_SESSION_KEY = "bisquits.seat-session.v1";
+const STORED_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 let state: GameState = createPlaceholderState();
 let drag: DragState | null = null;
@@ -332,6 +356,78 @@ let roomNoticeLevel: "info" | "error" = "info";
 let roomNoticeMessage = "";
 let sharedBagCount = 0;
 let winningBoardTiles: Array<Tile & { zone: "board"; row: number; col: number }> = [];
+let currentResumeToken = "";
+let currentPlayerName = sanitizePlayerName(playerNameInput.value);
+let isIntentionalLeave = false;
+
+function resetLocalRoundState(): void {
+  multiplayerRoom = null;
+  multiplayerSnapshot = null;
+  state = createPlaceholderState();
+  sharedBagCount = 0;
+  winningBoardTiles = [];
+  isWinOverlayDismissed = true;
+}
+
+function readStoredSeatSession(): StoredSeatSession | null {
+  try {
+    const raw = window.localStorage.getItem(STORED_SESSION_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<StoredSeatSession>;
+    if (
+      typeof parsed.roomId !== "string" ||
+      typeof parsed.playerName !== "string" ||
+      typeof parsed.resumeToken !== "string" ||
+      typeof parsed.updatedAt !== "number"
+    ) {
+      return null;
+    }
+
+    if (Date.now() - parsed.updatedAt > STORED_SESSION_MAX_AGE_MS) {
+      return null;
+    }
+
+    return {
+      roomId: parsed.roomId,
+      playerName: parsed.playerName,
+      resumeToken: parsed.resumeToken,
+      updatedAt: parsed.updatedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSeatSession(session: StoredSeatSession): void {
+  try {
+    window.localStorage.setItem(STORED_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Ignore local-storage failures.
+  }
+}
+
+function clearStoredSeatSession(): void {
+  try {
+    window.localStorage.removeItem(STORED_SESSION_KEY);
+  } catch {
+    // Ignore local-storage failures.
+  }
+}
+
+function persistCurrentSeatSession(): void {
+  if (!multiplayerRoom || !currentResumeToken) {
+    return;
+  }
+  writeStoredSeatSession({
+    roomId: multiplayerRoom.roomId,
+    playerName: currentPlayerName,
+    resumeToken: currentResumeToken,
+    updatedAt: Date.now(),
+  });
+}
 
 function getBoardMetrics(): { width: number; height: number; cellWidth: number; cellHeight: number; tileSize: number } {
   const rect = board.getBoundingClientRect();
@@ -433,13 +529,15 @@ function renderAvailableRooms(): void {
     header.className = "room-list-heading";
     const phase = room.metadata.phase ?? (room.metadata.hasActiveGame ? "playing" : "lobby");
     const count = room.metadata.playerCount ?? room.clients;
+    const connected = room.metadata.connectedCount ?? room.clients;
     const cap = room.metadata.maxPlayers ?? room.maxClients;
-    header.textContent = `${room.roomId} · ${phase} · ${count}/${cap}`;
+    header.textContent = `${room.roomId} · ${phase} · ${connected} online · ${count}/${cap}`;
 
     const detail = document.createElement("div");
     detail.className = "room-list-meta";
     const ownerName = room.metadata.ownerName ? `Host: ${room.metadata.ownerName}` : "Host unknown";
-    detail.textContent = ownerName;
+    const reserved = room.metadata.reservedCount ? ` · reserved: ${room.metadata.reservedCount}` : "";
+    detail.textContent = `${ownerName}${reserved}`;
 
     const joinButton = document.createElement("button");
     joinButton.type = "button";
@@ -522,25 +620,28 @@ async function leaveRoomSilently(): Promise<void> {
   if (!multiplayerRoom) {
     return;
   }
+  isIntentionalLeave = true;
   const roomToLeave = multiplayerRoom;
-  multiplayerRoom = null;
-  multiplayerSnapshot = null;
-  state = createPlaceholderState();
-  sharedBagCount = 0;
-  winningBoardTiles = [];
-  isWinOverlayDismissed = true;
+  resetLocalRoundState();
+  clearStoredSeatSession();
+  currentResumeToken = "";
   try {
     await roomToLeave.leave();
   } catch {
     // Ignore disconnect errors on teardown.
+  } finally {
+    isIntentionalLeave = false;
   }
 }
 
 function attachRoom(room: Room): void {
+  isIntentionalLeave = false;
   multiplayerRoom = room;
   multiplayerSnapshot = getRoomSnapshot(room);
   winningBoardTiles = [];
   isWinOverlayDismissed = true;
+  currentPlayerName = sanitizePlayerName(playerNameInput.value);
+  persistCurrentSeatSession();
   setRoomNotice("info", `Connected to room ${room.roomId}.`);
 
   room.onStateChange(() => {
@@ -558,6 +659,16 @@ function attachRoom(room: Room): void {
     multiplayerStats = payload;
     renderMultiplayerPanel();
   });
+
+  room.onMessage("seat_token", (payload: SeatTokenMessage) => {
+    const token = typeof payload?.token === "string" ? payload.token.trim() : "";
+    if (!token) {
+      return;
+    }
+    currentResumeToken = token;
+    persistCurrentSeatSession();
+  });
+  room.send("request_seat_token");
 
   room.onMessage("game_started", () => {
     winningBoardTiles = [];
@@ -594,33 +705,74 @@ function attachRoom(room: Room): void {
   });
 
   room.onLeave((code) => {
-    multiplayerRoom = null;
-    multiplayerSnapshot = null;
-    state = createPlaceholderState();
-    sharedBagCount = 0;
-    winningBoardTiles = [];
-    isWinOverlayDismissed = true;
-    setRoomNotice("error", `Disconnected from room (code ${code}).`);
+    if (multiplayerRoom !== room && !isIntentionalLeave) {
+      return;
+    }
+
+    resetLocalRoundState();
+    if (isIntentionalLeave) {
+      setRoomNotice("info", "Left room.");
+      render();
+      return;
+    }
+    setRoomNotice("error", `Disconnected from room (code ${code}). Your board is reserved for rejoin.`);
     render();
   });
+}
+
+async function attemptResumeJoin(): Promise<boolean> {
+  const storedSeat = readStoredSeatSession();
+  if (!storedSeat || !storedSeat.roomId || !storedSeat.resumeToken) {
+    return false;
+  }
+
+  try {
+    currentPlayerName = sanitizePlayerName(storedSeat.playerName);
+    playerNameInput.value = currentPlayerName;
+    const joinedRoom = await multiplayerClient.joinById(storedSeat.roomId, {
+      name: currentPlayerName,
+      resumeToken: storedSeat.resumeToken,
+    });
+    attachRoom(joinedRoom);
+    setRoomNotice("info", `Rejoined room ${joinedRoom.roomId}.`);
+    return true;
+  } catch {
+    clearStoredSeatSession();
+    currentResumeToken = "";
+    return false;
+  }
 }
 
 async function connectToRoom(mode: "create" | "join", explicitRoomId = ""): Promise<void> {
   const playerName = sanitizePlayerName(playerNameInput.value);
   playerNameInput.value = playerName;
+  currentPlayerName = playerName;
   const targetRoomId = explicitRoomId.trim();
 
   createRoomButton.disabled = true;
 
   try {
     await leaveRoomSilently();
+    if (mode === "create") {
+      clearStoredSeatSession();
+      currentResumeToken = "";
+    }
+    const storedSeat = readStoredSeatSession();
+    const resumeToken = storedSeat?.resumeToken ?? "";
+    const shouldSendResume = mode !== "create" && Boolean(resumeToken);
     let joinedRoom: Room;
     if (mode === "create") {
       joinedRoom = await multiplayerClient.create("bisquits", { name: playerName });
     } else if (targetRoomId) {
-      joinedRoom = await multiplayerClient.joinById(targetRoomId, { name: playerName });
+      joinedRoom = await multiplayerClient.joinById(targetRoomId, {
+        name: playerName,
+        resumeToken: shouldSendResume && storedSeat?.roomId === targetRoomId ? resumeToken : undefined,
+      });
     } else {
-      joinedRoom = await multiplayerClient.joinOrCreate("bisquits", { name: playerName });
+      joinedRoom = await multiplayerClient.joinOrCreate("bisquits", {
+        name: playerName,
+        resumeToken: shouldSendResume ? resumeToken : undefined,
+      });
     }
     attachRoom(joinedRoom);
     joinedRoom.send("set_name", { name: playerName });
@@ -836,12 +988,14 @@ function renderMultiplayerPanel(): void {
     sessionView.setAttribute("aria-hidden", "false");
     activePlayerName.textContent = localPlayer?.name ?? playerNameInput.value;
     activeRoomId.textContent = currentRoom.roomId;
-    const playerCount = Object.keys(snapshot.players).length;
-    roomDetails.textContent = `Room ${currentRoom.roomId} · ${playerCount}/4 players`;
+    const players = Object.values(snapshot.players);
+    const playerCount = players.length;
+    const connectedCount = players.filter((player) => player.connected !== false).length;
+    roomDetails.textContent = `Room ${currentRoom.roomId} · ${connectedCount} connected · ${playerCount}/4 seats`;
 
     roomPlayerList.innerHTML = "";
-    const players = Object.values(snapshot.players).sort((a, b) => a.name.localeCompare(b.name));
-    for (const player of players) {
+    const sortedPlayers = players.sort((a, b) => a.name.localeCompare(b.name));
+    for (const player of sortedPlayers) {
       const item = document.createElement("li");
       item.className = "player-list-item";
       const isHost = snapshot.ownerClientId === player.clientId;
@@ -853,7 +1007,15 @@ function renderMultiplayerPanel(): void {
       if (isSelf) {
         roleTokens.push("YOU");
       }
-      roleTokens.push(snapshot.phase === "playing" ? "PLAYING" : player.ready ? "READY" : "NOT READY");
+      roleTokens.push(
+        player.connected === false
+          ? "DISCONNECTED"
+          : snapshot.phase === "playing"
+            ? "PLAYING"
+            : player.ready
+              ? "READY"
+              : "NOT READY",
+      );
       const tag = roleTokens.join(" · ");
       const longestWord = player.longestWord ? ` · best: ${player.longestWord}` : "";
       item.textContent = `${player.name} (${tag}) · ${player.wins}W/${player.gamesPlayed}G${longestWord}`;
@@ -873,7 +1035,7 @@ function renderMultiplayerPanel(): void {
     const canStart =
       showReady &&
       isHost &&
-      Object.keys(snapshot.players).length >= 2;
+      connectedCount >= 2;
     startRoomButton.disabled = !canStart;
     startRoomButton.textContent = snapshot.phase === "playing" ? "Playing" : "Start";
   }
@@ -1044,6 +1206,8 @@ startRoomButton.addEventListener("click", () => {
 quitRoomButton.addEventListener("click", () => {
   void (async () => {
     await leaveRoomSilently();
+    clearStoredSeatSession();
+    currentResumeToken = "";
     setRoomNotice("info", "Left room.");
     render();
   })();
@@ -1075,10 +1239,10 @@ const boardResizeObserver = new ResizeObserver(() => {
 });
 boardResizeObserver.observe(board);
 
-window.addEventListener("beforeunload", () => {
-  void leaveRoomSilently();
-});
-
 renderGrid();
-void refreshOpenRooms();
 render();
+void (async () => {
+  await attemptResumeJoin();
+  await refreshOpenRooms();
+  render();
+})();
