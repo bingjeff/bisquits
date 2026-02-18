@@ -101,9 +101,44 @@ defineTypes(PlayerBoardState, {
   tiles: [BoardTileState],
 });
 
+export class ActionEventState extends Schema {
+  declare timestamp: number;
+  declare type: string;
+  declare actorPlayerId: string;
+  declare actorName: string;
+  declare details: string;
+  declare bagCount: number;
+  declare turn: number;
+  declare phase: string;
+
+  constructor() {
+    super();
+    this.timestamp = Date.now();
+    this.type = "";
+    this.actorPlayerId = "";
+    this.actorName = "";
+    this.details = "";
+    this.bagCount = 0;
+    this.turn = 0;
+    this.phase = "lobby";
+  }
+}
+
+defineTypes(ActionEventState, {
+  timestamp: "number",
+  type: "string",
+  actorPlayerId: "string",
+  actorName: "string",
+  details: "string",
+  bagCount: "number",
+  turn: "number",
+  phase: "string",
+});
+
 export class BisquitsRoomState extends Schema {
   declare players: MapSchema<PlayerState>;
   declare boards: MapSchema<PlayerBoardState>;
+  declare actionLog: ArraySchema<ActionEventState>;
   declare phase: RoomPhase;
   declare ownerClientId: string;
   declare lastWinnerName: string;
@@ -115,6 +150,7 @@ export class BisquitsRoomState extends Schema {
     super();
     this.players = new MapSchema<PlayerState>();
     this.boards = new MapSchema<PlayerBoardState>();
+    this.actionLog = new ArraySchema<ActionEventState>();
     this.phase = "lobby";
     this.ownerClientId = "";
     this.lastWinnerName = "";
@@ -127,6 +163,7 @@ export class BisquitsRoomState extends Schema {
 defineTypes(BisquitsRoomState, {
   players: { map: PlayerState },
   boards: { map: PlayerBoardState },
+  actionLog: [ActionEventState],
   phase: "string",
   ownerClientId: "string",
   lastWinnerName: "string",

@@ -273,6 +273,14 @@ function roomBoardByPlayerId(json: Record<string, unknown>, playerId: string): R
   return entry as Record<string, unknown>;
 }
 
+function roomActionLog(json: Record<string, unknown>): Array<Record<string, unknown>> {
+  const entries = json.actionLog;
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"));
+}
+
 test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, async () => {
   const port = await getRandomPort();
   const server = await startServer(port);
@@ -399,6 +407,8 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
     assert.equal(t1InHostBoard?.zone, "board");
     assert.equal(t1InHostBoard?.row, 1);
     assert.equal(t1InHostBoard?.col, 1);
+    const loggedMove = roomActionLog(stateAfterHostMove).find((entry) => entry.type === "move_tile" && entry.details === "t1@1,1");
+    assert.ok(loggedMove);
     assert.deepEqual(tilePositionById(guestStartSnapshot, "t1"), {
       zone: "staging",
       row: null,
@@ -735,6 +745,11 @@ test("multiplayer integration: disconnected player can rejoin reserved seat and 
       row: 1,
       col: 1,
     });
+
+    const stateAfterRejoin = roomStateToJson(reclaimedRoom);
+    const actions = roomActionLog(stateAfterRejoin);
+    assert.equal(actions.some((entry) => entry.type === "disconnect" && entry.actorName === "Host"), true);
+    assert.equal(actions.some((entry) => entry.type === "rejoin" && entry.actorName === "Host"), true);
   } finally {
     await server.stop();
   }

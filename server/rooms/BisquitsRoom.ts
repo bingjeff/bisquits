@@ -8,7 +8,13 @@ import {
   type GameState,
   type Tile,
 } from "../../shared/game/engine";
-import { BisquitsRoomState, BoardTileState, PlayerBoardState, PlayerState } from "../state/BisquitsRoomState";
+import {
+  ActionEventState,
+  BisquitsRoomState,
+  BoardTileState,
+  PlayerBoardState,
+  PlayerState,
+} from "../state/BisquitsRoomState";
 import { statsStore } from "../stats/StatsStore";
 
 interface PlayerNameMessage {
@@ -152,6 +158,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
   maxClients = 4;
 
   private readonly seatReservationSeconds = parseBoundedInt(process.env.BISQUITS_RESERVATION_SECONDS, 300, 10, 3600);
+  private readonly actionLogLimit = parseBoundedInt(process.env.BISQUITS_ACTION_LOG_LIMIT, 120, 20, 500);
 
   private playerGameStates = new Map<string, GameState>();
   private playerIdBySessionId = new Map<string, string>();
@@ -257,6 +264,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       level: "info",
       message: `${player.name} ${joinedMessage} the room.`,
     });
+    this.appendActionLog(joinedMessage === "rejoined" ? "rejoin" : "join", player.playerId, player.name, player.name);
 
     const stats = await statsStore.getSnapshot();
     client.send("stats_snapshot", stats);
@@ -276,6 +284,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     if (consented) {
+      this.appendActionLog("leave", leavingPlayer.playerId, leavingPlayer.name, leavingPlayer.name);
       this.removePlayerBySession(client.sessionId, `${leavingPlayer.name} left the room.`);
       return;
     }
@@ -283,6 +292,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     leavingPlayer.connected = false;
     this.playerIdBySessionId.delete(client.sessionId);
     this.reserveDisconnectedSeat(leavingPlayer.playerId);
+    this.appendActionLog("disconnect", leavingPlayer.playerId, leavingPlayer.name, leavingPlayer.name);
 
     if (this.state.ownerClientId === client.sessionId) {
       this.state.ownerClientId = this.getFirstConnectedPlayerSessionId() || this.getFirstPlayerId();
@@ -319,6 +329,12 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
     this.sharedBagCount = this.getCurrentBagCountFromRound();
     this.syncAllBoardSnapshotsFromGames();
+    this.appendActionLog(
+      "start_game",
+      this.getPlayerIdForSession(client.sessionId),
+      this.state.players.get(client.sessionId)?.name ?? "Host",
+      `${connectedPlayers.length} players`,
+    );
 
     this.broadcast("game_started", { startedAt: Date.now() });
     this.sendSnapshotsToAllPlayers("start_game", client.sessionId);
@@ -348,6 +364,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     const next = moveTile(current, tileId, row, col);
     this.playerGameStates.set(playerId, next);
     this.syncPlayerBoardSnapshot(playerId, next);
+    this.appendActionLog("move_tile", playerId, this.state.players.get(client.sessionId)?.name ?? "", `${tileId}@${row},${col}`);
     client.send("game_snapshot", this.buildGameSnapshot(next, "move_tile", client.sessionId));
   }
 
@@ -378,6 +395,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     const next = tradeTile(current, tileId);
     this.playerGameStates.set(playerId, next);
     this.syncPlayerBoardSnapshot(playerId, next);
+    this.appendActionLog("trade_tile", playerId, this.state.players.get(client.sessionId)?.name ?? "", tileId);
     const bagDelta = previousBagCount - next.drawPile.length;
     if (bagDelta !== 0) {
       this.sharedBagCount = Math.max(0, this.sharedBagCount - bagDelta);
@@ -416,6 +434,12 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     this.sendSnapshotsToAllPlayers("serve_plate", client.sessionId);
+    this.appendActionLog(
+      "serve_plate",
+      actorPlayerId,
+      this.state.players.get(client.sessionId)?.name ?? "",
+      actorNextState?.status ?? "running",
+    );
 
     if (!actorNextState || actorNextState.status === "running") {
       return;
@@ -578,12 +602,14 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       level: "info",
       message: `${winner.name} won the round${longestWord ? ` with longest word ${longestWord}` : ""}.`,
     });
+    this.appendActionLog("game_won", winnerPlayerId, winner.name, longestWord || "no-word");
     this.clearRoundGames();
     this.updateRoomMetadata();
   }
 
   private finalizeNoWinner(message: string): void {
     this.state.phase = "lobby";
+    this.appendActionLog("round_reset", "", "", message);
     this.clearRoundGames();
     this.broadcast("room_notice", {
       level: "info",
@@ -746,6 +772,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     if (!player) {
       return;
     }
+    this.appendActionLog("remove_player", player.playerId, player.name, message);
 
     this.state.players.delete(sessionId);
     this.playerIdBySessionId.delete(sessionId);
@@ -812,6 +839,29 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     for (const [playerId, gameState] of this.playerGameStates.entries()) {
       this.syncPlayerBoardSnapshot(playerId, gameState);
     }
+  }
+
+  private appendActionLog(type: string, actorPlayerId: string, actorName: string, details: string): void {
+    const event = new ActionEventState();
+    event.timestamp = Date.now();
+    event.type = type;
+    event.actorPlayerId = actorPlayerId || "";
+    event.actorName = actorName || "";
+    event.details = details || "";
+    event.bagCount = this.sharedBagCount;
+    event.turn = this.getCurrentRoundTurn();
+    event.phase = this.state.phase;
+    this.state.actionLog.push(event);
+
+    const overflow = this.state.actionLog.length - this.actionLogLimit;
+    if (overflow > 0) {
+      this.state.actionLog.splice(0, overflow);
+    }
+  }
+
+  private getCurrentRoundTurn(): number {
+    const firstState = this.playerGameStates.values().next().value as GameState | undefined;
+    return firstState?.turn ?? 0;
   }
 
   private generatePlayerId(): string {
