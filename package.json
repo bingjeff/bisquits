@@ -18,7 +18,8 @@
     "typecheck": "pnpm typecheck:client && pnpm typecheck:server",
     "typecheck:client": "tsc --noEmit",
     "typecheck:server": "tsc --noEmit -p tsconfig.server.json",
-    "server": "tsx server/index.ts"
+    "server": "tsx server/index.ts",
+    "deploy:cloudrun": "bash scripts/deploy-cloud-run.sh"
   },
   "keywords": [],
   "author": "",

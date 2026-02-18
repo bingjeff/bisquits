@@ -356,7 +356,9 @@ const localNameSeed = Math.floor(100 + Math.random() * 900);
 playerNameInput.value = `Player ${localNameSeed}`;
 
 const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-const defaultColyseusEndpoint = `${wsProtocol}://${window.location.hostname}:2567`;
+const runningOnVite = window.location.port === "5173" || window.location.port === "4173";
+const inferredColyseusHost = runningOnVite ? `${window.location.hostname}:2567` : window.location.host;
+const defaultColyseusEndpoint = `${wsProtocol}://${inferredColyseusHost}`;
 const colyseusEndpoint = import.meta.env.VITE_COLYSEUS_URL || defaultColyseusEndpoint;
 const multiplayerClient = new ColyseusClient(colyseusEndpoint);
 const STORED_SESSION_KEY = "bisquits.seat-session.v1";
