@@ -8,7 +8,7 @@ import {
   type GameState,
   type Tile,
 } from "../../shared/game/engine";
-import { BisquitsRoomState, PlayerState } from "../state/BisquitsRoomState";
+import { BisquitsRoomState, BoardTileState, PlayerBoardState, PlayerState } from "../state/BisquitsRoomState";
 import { statsStore } from "../stats/StatsStore";
 
 interface PlayerNameMessage {
@@ -318,6 +318,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       this.playerGameStates.set(participant.playerId, createGame({ players: this.activeRoundPlayers }));
     }
     this.sharedBagCount = this.getCurrentBagCountFromRound();
+    this.syncAllBoardSnapshotsFromGames();
 
     this.broadcast("game_started", { startedAt: Date.now() });
     this.sendSnapshotsToAllPlayers("start_game", client.sessionId);
@@ -346,6 +347,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
     const next = moveTile(current, tileId, row, col);
     this.playerGameStates.set(playerId, next);
+    this.syncPlayerBoardSnapshot(playerId, next);
     client.send("game_snapshot", this.buildGameSnapshot(next, "move_tile", client.sessionId));
   }
 
@@ -375,6 +377,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     const previousBagCount = current.drawPile.length;
     const next = tradeTile(current, tileId);
     this.playerGameStates.set(playerId, next);
+    this.syncPlayerBoardSnapshot(playerId, next);
     const bagDelta = previousBagCount - next.drawPile.length;
     if (bagDelta !== 0) {
       this.sharedBagCount = Math.max(0, this.sharedBagCount - bagDelta);
@@ -401,6 +404,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     }
 
     this.playerGameStates = nextByPlayerId;
+    this.syncAllBoardSnapshotsFromGames();
 
     const actorPlayerId = this.getPlayerIdForSession(client.sessionId);
     const actorNextState = actorPlayerId ? nextByPlayerId.get(actorPlayerId) : undefined;
@@ -467,6 +471,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
 
     const existing = this.playerGameStates.get(playerId);
     if (existing) {
+      this.syncPlayerBoardSnapshot(playerId, existing);
       return existing;
     }
 
@@ -476,19 +481,22 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
       this.resizeBag(created, this.sharedBagCount);
     }
     this.playerGameStates.set(playerId, created);
+    this.syncPlayerBoardSnapshot(playerId, created);
     return created;
   }
 
   private clearRoundGames(): void {
     this.playerGameStates.clear();
+    this.state.boards.clear();
     this.activeRoundPlayers = 0;
     this.sharedBagCount = 0;
   }
 
   private synchronizePlayerBagSizes(targetCount: number): void {
-    for (const gameState of this.playerGameStates.values()) {
+    for (const [playerId, gameState] of this.playerGameStates.entries()) {
       if (gameState.drawPile.length !== targetCount) {
         this.resizeBag(gameState, targetCount);
+        this.syncPlayerBoardSnapshot(playerId, gameState);
       }
     }
   }
@@ -742,6 +750,7 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     this.state.players.delete(sessionId);
     this.playerIdBySessionId.delete(sessionId);
     this.playerGameStates.delete(player.playerId);
+    this.state.boards.delete(player.playerId);
 
     const resumeToken = this.resumeTokenByPlayerId.get(player.playerId);
     if (resumeToken) {
@@ -768,6 +777,41 @@ export class BisquitsRoom extends Room<BisquitsRoomState> {
     });
 
     this.updateRoomMetadata();
+  }
+
+  private syncPlayerBoardSnapshot(playerId: string, gameState: GameState): void {
+    let board = this.state.boards.get(playerId);
+    if (!board) {
+      board = new PlayerBoardState();
+      board.playerId = playerId;
+      this.state.boards.set(playerId, board);
+    }
+
+    board.status = gameState.status;
+    board.turn = gameState.turn;
+    board.drawPileCount = gameState.drawPile.length;
+    board.rows = gameState.config.rows;
+    board.cols = gameState.config.cols;
+    board.players = gameState.config.players;
+    board.lastAction = gameState.lastAction;
+    board.tiles.splice(0, board.tiles.length);
+
+    for (const tile of gameState.tiles) {
+      const boardTile = new BoardTileState();
+      boardTile.id = tile.id;
+      boardTile.letter = tile.letter;
+      boardTile.zone = tile.zone;
+      boardTile.row = tile.row ?? -1;
+      boardTile.col = tile.col ?? -1;
+      board.tiles.push(boardTile);
+    }
+  }
+
+  private syncAllBoardSnapshotsFromGames(): void {
+    this.state.boards.clear();
+    for (const [playerId, gameState] of this.playerGameStates.entries()) {
+      this.syncPlayerBoardSnapshot(playerId, gameState);
+    }
   }
 
   private generatePlayerId(): string {

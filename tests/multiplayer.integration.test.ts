@@ -255,6 +255,24 @@ function tilePositionById(
   return null;
 }
 
+function roomPlayerBySessionId(json: Record<string, unknown>, sessionId: string): Record<string, unknown> | null {
+  const players = (json.players as Record<string, unknown>) ?? {};
+  const entry = players[sessionId];
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  return entry as Record<string, unknown>;
+}
+
+function roomBoardByPlayerId(json: Record<string, unknown>, playerId: string): Record<string, unknown> | null {
+  const boards = (json.boards as Record<string, unknown>) ?? {};
+  const entry = boards[playerId];
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  return entry as Record<string, unknown>;
+}
+
 test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, async () => {
   const port = await getRandomPort();
   const server = await startServer(port);
@@ -369,6 +387,18 @@ test("multiplayer integration: create, join, ready, start", { timeout: 60000 }, 
       row: 1,
       col: 1,
     });
+    const stateAfterHostMove = roomStateToJson(hostRoom);
+    const hostRoomPlayer = roomPlayerBySessionId(stateAfterHostMove, hostRoom.sessionId);
+    assert.ok(hostRoomPlayer);
+    const hostPlayerId = String(hostRoomPlayer?.playerId ?? "");
+    assert.ok(hostPlayerId.length > 0);
+    const hostBoard = roomBoardByPlayerId(stateAfterHostMove, hostPlayerId);
+    assert.ok(hostBoard);
+    const hostBoardTiles = Array.isArray(hostBoard?.tiles) ? hostBoard.tiles : [];
+    const t1InHostBoard = (hostBoardTiles as Array<Record<string, unknown>>).find((tile) => tile.id === "t1");
+    assert.equal(t1InHostBoard?.zone, "board");
+    assert.equal(t1InHostBoard?.row, 1);
+    assert.equal(t1InHostBoard?.col, 1);
     assert.deepEqual(tilePositionById(guestStartSnapshot, "t1"), {
       zone: "staging",
       row: null,
@@ -668,6 +698,26 @@ test("multiplayer integration: disconnected player can rejoin reserved seat and 
 
     void hostRoom.leave(false);
     await disconnectedStatePromise;
+
+    const stateWhileDisconnected = roomStateToJson(guestRoom);
+    const hostEntryWhileDisconnected = Object.values(
+      (stateWhileDisconnected.players as Record<string, unknown>) ?? {},
+    ).find((value) => {
+      if (!value || typeof value !== "object") {
+        return false;
+      }
+      const candidate = value as Record<string, unknown>;
+      return candidate.name === "Host";
+    }) as Record<string, unknown> | undefined;
+    assert.ok(hostEntryWhileDisconnected);
+    const hostPlayerIdWhileDisconnected = String(hostEntryWhileDisconnected?.playerId ?? "");
+    const hostBoardWhileDisconnected = roomBoardByPlayerId(stateWhileDisconnected, hostPlayerIdWhileDisconnected);
+    assert.ok(hostBoardWhileDisconnected);
+    const disconnectedBoardTiles = Array.isArray(hostBoardWhileDisconnected?.tiles) ? hostBoardWhileDisconnected.tiles : [];
+    const t1WhileDisconnected = (disconnectedBoardTiles as Array<Record<string, unknown>>).find((tile) => tile.id === "t1");
+    assert.equal(t1WhileDisconnected?.zone, "board");
+    assert.equal(t1WhileDisconnected?.row, 1);
+    assert.equal(t1WhileDisconnected?.col, 1);
 
     reclaimedRoom = await reclaimClient.joinById(hostRoom.roomId, {
       name: "Host",

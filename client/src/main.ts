@@ -30,6 +30,7 @@ interface MultiplayerRoomSnapshot {
   lastLongestWord: string;
   roundsPlayed: number;
   players: Record<string, MultiplayerPlayerSnapshot>;
+  boards?: Record<string, PlayerBoardSnapshot>;
 }
 
 interface RoomNoticeMessage {
@@ -72,6 +73,26 @@ interface GameFinishedMessage {
   longestWord?: string;
   winnerClientId?: string;
   winningBoardTiles?: Tile[];
+}
+
+interface BoardTileSnapshot {
+  id: string;
+  letter: string;
+  zone: "board" | "staging";
+  row: number;
+  col: number;
+}
+
+interface PlayerBoardSnapshot {
+  playerId: string;
+  status: GameState["status"];
+  turn: number;
+  drawPileCount: number;
+  rows: number;
+  cols: number;
+  players: number;
+  lastAction: string;
+  tiles: BoardTileSnapshot[];
 }
 
 interface ListedRoomMetadata {
@@ -475,6 +496,48 @@ function getLocalRoomPlayer(): MultiplayerPlayerSnapshot | null {
   return multiplayerSnapshot.players[multiplayerRoom.sessionId] ?? null;
 }
 
+function hydrateGameStateFromSnapshot(snapshot: MultiplayerRoomSnapshot): boolean {
+  if (!multiplayerRoom || snapshot.phase !== "playing") {
+    return false;
+  }
+
+  const localPlayer = snapshot.players[multiplayerRoom.sessionId];
+  if (!localPlayer) {
+    return false;
+  }
+
+  const localBoard = snapshot.boards?.[localPlayer.playerId];
+  if (!localBoard) {
+    return false;
+  }
+
+  const rows = Math.max(1, Number(localBoard.rows || state.config.rows || DEFAULT_CONFIG.rows));
+  const cols = Math.max(1, Number(localBoard.cols || state.config.cols || DEFAULT_CONFIG.cols));
+  const players = Math.max(2, Number(localBoard.players || state.config.players || DEFAULT_CONFIG.players));
+  state = {
+    config: {
+      rows,
+      cols,
+      players,
+      initialVisibleTiles: DEFAULT_CONFIG.initialVisibleTiles,
+      pressureRangeMs: [DEFAULT_CONFIG.pressureRangeMs[0], DEFAULT_CONFIG.pressureRangeMs[1]],
+    },
+    status: localBoard.status ?? "running",
+    turn: Number(localBoard.turn ?? 0),
+    nextTileId: Math.max(1, state.nextTileId),
+    drawPile: Array.from({ length: Math.max(0, Number(localBoard.drawPileCount ?? 0)) }, () => "E"),
+    tiles: (localBoard.tiles ?? []).map((tile) => ({
+      id: tile.id,
+      letter: tile.letter,
+      zone: tile.zone === "board" ? "board" : "staging",
+      row: tile.zone === "board" && tile.row >= 0 ? tile.row : null,
+      col: tile.zone === "board" && tile.col >= 0 ? tile.col : null,
+    })),
+    lastAction: localBoard.lastAction ?? state.lastAction,
+  };
+  return true;
+}
+
 function isServerAuthoritativePlaying(): boolean {
   return Boolean(multiplayerRoom && multiplayerSnapshot?.phase === "playing");
 }
@@ -638,6 +701,9 @@ function attachRoom(room: Room): void {
   isIntentionalLeave = false;
   multiplayerRoom = room;
   multiplayerSnapshot = getRoomSnapshot(room);
+  if (multiplayerSnapshot) {
+    hydrateGameStateFromSnapshot(multiplayerSnapshot);
+  }
   winningBoardTiles = [];
   isWinOverlayDismissed = true;
   currentPlayerName = sanitizePlayerName(playerNameInput.value);
@@ -646,8 +712,10 @@ function attachRoom(room: Room): void {
 
   room.onStateChange(() => {
     multiplayerSnapshot = getRoomSnapshot(room);
-    renderMultiplayerPanel();
-    renderStatus();
+    if (multiplayerSnapshot) {
+      hydrateGameStateFromSnapshot(multiplayerSnapshot);
+    }
+    render();
   });
 
   room.onMessage("room_notice", (payload: RoomNoticeMessage) => {

@@ -1,4 +1,4 @@
-import { MapSchema, Schema, defineTypes } from "@colyseus/schema";
+import { ArraySchema, MapSchema, Schema, defineTypes } from "@colyseus/schema";
 
 export type RoomPhase = "lobby" | "playing";
 
@@ -39,8 +39,71 @@ defineTypes(PlayerState, {
   longestWord: "string",
 });
 
+export class BoardTileState extends Schema {
+  declare id: string;
+  declare letter: string;
+  declare zone: string;
+  declare row: number;
+  declare col: number;
+
+  constructor() {
+    super();
+    this.id = "";
+    this.letter = "";
+    this.zone = "staging";
+    this.row = -1;
+    this.col = -1;
+  }
+}
+
+defineTypes(BoardTileState, {
+  id: "string",
+  letter: "string",
+  zone: "string",
+  row: "number",
+  col: "number",
+});
+
+export class PlayerBoardState extends Schema {
+  declare playerId: string;
+  declare status: string;
+  declare turn: number;
+  declare drawPileCount: number;
+  declare rows: number;
+  declare cols: number;
+  declare players: number;
+  declare lastAction: string;
+  declare tiles: ArraySchema<BoardTileState>;
+
+  constructor() {
+    super();
+    this.playerId = "";
+    this.status = "running";
+    this.turn = 0;
+    this.drawPileCount = 0;
+    this.rows = 0;
+    this.cols = 0;
+    this.players = 0;
+    this.lastAction = "";
+    this.tiles = new ArraySchema<BoardTileState>();
+  }
+}
+
+defineTypes(PlayerBoardState, {
+  playerId: "string",
+  status: "string",
+  turn: "number",
+  drawPileCount: "number",
+  rows: "number",
+  cols: "number",
+  players: "number",
+  lastAction: "string",
+  tiles: [BoardTileState],
+});
+
 export class BisquitsRoomState extends Schema {
   declare players: MapSchema<PlayerState>;
+  declare boards: MapSchema<PlayerBoardState>;
   declare phase: RoomPhase;
   declare ownerClientId: string;
   declare lastWinnerName: string;
@@ -51,6 +114,7 @@ export class BisquitsRoomState extends Schema {
   constructor() {
     super();
     this.players = new MapSchema<PlayerState>();
+    this.boards = new MapSchema<PlayerBoardState>();
     this.phase = "lobby";
     this.ownerClientId = "";
     this.lastWinnerName = "";
@@ -62,6 +126,7 @@ export class BisquitsRoomState extends Schema {
 
 defineTypes(BisquitsRoomState, {
   players: { map: PlayerState },
+  boards: { map: PlayerBoardState },
   phase: "string",
   ownerClientId: "string",
   lastWinnerName: "string",
